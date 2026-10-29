@@ -31,25 +31,25 @@ class EquationOfState:
                     if table else lalsim.SimNeutronStarEOSByName(name))
         self.hmax = lalsim.SimNeutronStarEOSMaxPseudoEnthalpy(self.raw)
 
-    def at_h(self, h):
+    def at_h(self, pseudo_enthalpy):
         """Return (P [km^-2], total energy density [km^-2], rest rho [kg m^-3])."""
         # Trial ODE evaluations can step beyond the terminal surface. Keep the
         # library query positive; the event, not this floor, defines the surface.
-        h = max(float(h), 1e-14)
-        p = lalsim.SimNeutronStarEOSPressureOfPseudoEnthalpy(h, self.raw)
-        energy = lalsim.SimNeutronStarEOSEnergyDensityOfPseudoEnthalpy(h, self.raw)
-        rho = lalsim.SimNeutronStarEOSRestMassDensityOfPseudoEnthalpy(h, self.raw)
-        return p * PRESSURE_TO_GEOM, energy * PRESSURE_TO_GEOM, rho
+        pseudo_enthalpy = max(float(pseudo_enthalpy), 1e-14)
+        pressure = lalsim.SimNeutronStarEOSPressureOfPseudoEnthalpy(pseudo_enthalpy, self.raw)
+        energy_density = lalsim.SimNeutronStarEOSEnergyDensityOfPseudoEnthalpy(pseudo_enthalpy, self.raw)
+        rest_mass_density = lalsim.SimNeutronStarEOSRestMassDensityOfPseudoEnthalpy(pseudo_enthalpy, self.raw)
+        return pressure * PRESSURE_TO_GEOM, energy_density * PRESSURE_TO_GEOM, rest_mass_density
 
-    def h_at_rho(self, rho_g_cm3):
+    def h_at_rho(self, rest_mass_density_g_cm3):
         """Invert the rest-density label, converting kg/m^3 to g/cm^3."""
-        return brentq(lambda h: self.at_h(h)[2] / 1000 - rho_g_cm3,
+        return brentq(lambda pseudo_enthalpy: self.at_h(pseudo_enthalpy)[2] / 1000 - rest_mass_density_g_cm3,
                       1e-10, self.hmax, xtol=1e-14)
 
-    def dedp(self, p_geom):
+    def dedp(self, pressure_geom):
         """Dimensionless dE/dP; its reciprocal is c_s^2/c^2."""
         return lalsim.SimNeutronStarEOSEnergyDensityDerivOfPressure(
-            p_geom / PRESSURE_TO_GEOM, self.raw)
+            pressure_geom / PRESSURE_TO_GEOM, self.raw)
 
 
 def monotone_table(raw, path, points=DENSE_TABLE_POINTS):
@@ -58,12 +58,12 @@ def monotone_table(raw, path, points=DENSE_TABLE_POINTS):
     Both input and output columns stay in geometric m^-2 as expected by LAL.
     ``points`` counts the added logarithmic grid, not the final union of nodes.
     """
-    dense_p = np.unique(np.r_[np.geomspace(raw[0, 0], raw[-1, 0], points), raw[:, 0]])
+    dense_pressure = np.unique(np.r_[np.geomspace(raw[0, 0], raw[-1, 0], points), raw[:, 0]])
     pchip = PchipInterpolator(np.log(raw[:, 0]), np.log(raw[:, 1]))
-    dense_e = np.exp(pchip(np.log(dense_p)))
-    dense_e[np.searchsorted(dense_p, raw[:, 0])] = raw[:, 1]
-    np.savetxt(path, np.column_stack([dense_p, dense_e]), fmt="%.18e")
-    return len(dense_p)
+    dense_energy_density = np.exp(pchip(np.log(dense_pressure)))
+    dense_energy_density[np.searchsorted(dense_pressure, raw[:, 0])] = raw[:, 1]
+    np.savetxt(path, np.column_stack([dense_pressure, dense_energy_density]), fmt="%.18e")
+    return len(dense_pressure)
 
 
 def load_apr(data_dir):

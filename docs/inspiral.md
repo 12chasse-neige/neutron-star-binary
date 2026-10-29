@@ -1,37 +1,26 @@
 # Two-component inspiral: equations and implementation
 
-[`nsbinary/inspiral.py`](../nsbinary/inspiral.py) implements a rigid projection
-of the straight-vortex entrainment model of
-[Antonelli & Pizzochero (AP)](https://arxiv.org/abs/1603.02838v4), combined with
-the aligned circular quadrupole resonance of
-[Miao & Yang](https://arxiv.org/abs/2511.08895v2).
-[`scripts/compute_inspiral.py`](../scripts/compute_inspiral.py) runs the
-scenarios and writes numeric traces and summaries.
-This is an extension under explicit approximations, not a direct reproduction
-of a published two-fluid binary calculation.
+[`nsbinary/inspiral.py`](../nsbinary/inspiral.py) implements a rigid projection of the straight-vortex entrainment model of [Antonelli & Pizzochero (AP)](https://arxiv.org/abs/1603.02838v4), combined with the aligned circular quadrupole resonance of [Miao & Yang](https://arxiv.org/abs/2511.08895v2). [`scripts/compute_inspiral.py`](../scripts/compute_inspiral.py) runs the scenarios and writes numeric traces and summaries. This is an extension under explicit approximations, not a direct reproduction of a published two-fluid binary calculation.
 
 ## 1. Components, geometry and notation
 
-There are two effective rotational components and two superfluid microphysics
-zones. These are different divisions of the star:
+There are two effective rotational components and two superfluid microphysics zones. These are different divisions of the star:
 
 | Symbol | Meaning | Code |
 |---|---|---|
-| $\Omega_p$ | Rigid crust plus charged matter throughout the star | `op` |
-| $\Omega_v$ | Spatially uniform canonical superfluid rotation | `ov` |
+| $\Omega_p$ | Rigid crust plus charged matter throughout the star | `omega_p` |
+| $\Omega_v$ | Spatially uniform canonical superfluid rotation | `omega_v` |
 | $\Omega_n(r)$ | Neutron transport rotation, reconstructed per zone | Transport-frequency CSV columns |
-| $\omega=\Omega_v-\Omega_p$ | Canonical lag | `ov-op` |
-| $I_v$, $I_p=I-I_v$ | Effective canonical inertias | `fv*I`, `fp*I` |
+| $\omega=\Omega_v-\Omega_p$ | Canonical lag | `omega_v-omega_p` |
+| $I_v$, $I_p=I-I_v$ | Effective canonical inertias | `I_v_fraction*I`, `I_p_fraction*I` |
 | $x$, $z$ | Cylindrical radius and axial coordinate | Line quadrature |
 | $r_{\rm cc}$, $R_d$ | Core edge and neutron-drip radius | Saved APR boundaries |
-| $\epsilon$ | Prescribed equatorial ellipticity | `eps` |
+| $\epsilon$ | Prescribed equatorial ellipticity | `ellipticity` |
 | $\varepsilon_n$ | Neutron entrainment parameter | Zone configuration |
-| $\gamma=2(\theta-f)$ | Figure–orbit phase; $f$ is orbital angle | `phase` |
-| $n$, $\Omega_{\rm orb}$ | Kepler and Hamiltonian orbital angular frequencies | `n`, `orb` |
+| $\gamma=2(\theta-f)$ | Figure–orbit phase; $f$ is orbital angle | `gamma` |
+| $n$, $\Omega_{\rm orb}$ | Kepler and Hamiltonian orbital angular frequencies | `omega_kepler`, `omega_orb` |
 
-All dynamics use SI. Angular frequencies are in $\mathrm{rad\,s^{-1}}$;
-frequencies in Hz divide these by $2\pi$. The canonical rotation is neither
-neutron transport rotation nor the angular velocity of vortex lines:
+All dynamics use SI. Angular frequencies are in $\mathrm{rad\,s^{-1}}$; frequencies in Hz divide these by $2\pi$. The canonical rotation is neither neutron transport rotation nor the angular velocity of vortex lines:
 
 $$
 \begin{aligned}
@@ -43,23 +32,13 @@ $$
 \end{aligned}
 $$
 
-A uniform $\Omega_v$ permits different $\Omega_n$ in the core and inner crust.
-Their $x_n$, $\varepsilon_n$ and drag ratios are prescribed piecewise constants.
-The outer crust has $x_n=0$. The charged component interpenetrates the core;
-it is not just a geometrical outer shell. $I_v$ describes an angular-momentum
-reservoir, not the inertia of microscopic vortex cores.
+A uniform $\Omega_v$ permits different $\Omega_n$ in the core and inner crust. Their $x_n$, $\varepsilon_n$ and drag ratios are prescribed piecewise constants. The outer crust has $x_n=0$. The charged component interpenetrates the core; it is not just a geometrical outer shell. $I_v$ describes an angular-momentum reservoir, not the inertia of microscopic vortex cores.
 
-The input checks require $0\leq x_n<1$, $\varepsilon_n<x_p=1-x_n$ and
-nonnegative drag, giving a locally positive inertia matrix. All neutrons counted
-by $x_n$ are assumed superfluid. APR supplies neither these fractions nor pairing,
-entrainment or drag.
+The input checks require $0\leq x_n<1$, $\varepsilon_n<x_p=1-x_n$ and nonnegative drag, giving a locally positive inertia matrix. All neutrons counted by $x_n$ are assumed superfluid. APR supplies neither these fractions nor pairing, entrainment or drag.
 
 ## 2. Straight-vortex line integrals
 
-`build_reservoir` reads the saved APR rest density, boundaries and Hartle inertia.
-For a line at $x<R_d$, let $z_d(x)=\sqrt{R_d^2-x^2}$,
-$r=\sqrt{x^2+z^2}$ and $\kappa=h_{\rm P}/(2m_n)$, where $h_{\rm P}$ is Planck's
-constant. Reflection symmetry supplies a factor of two:
+`build_reservoir` reads the saved APR rest density, boundaries and Hartle inertia. For a line at $x<R_d$, let $z_d(x)=\sqrt{R_d^2-x^2}$, $r=\sqrt{x^2+z^2}$ and $\kappa=h_{\rm P}/(2m_n)$, where $h_{\rm P}$ is Planck's constant. Reflection symmetry supplies a factor of two:
 
 $$
 \begin{aligned}
@@ -71,8 +50,7 @@ d(x)&=\frac2\kappa\int_0^{z_d}\eta(r)\,dz
 \end{aligned}
 $$
 
-$a,b,d$ have units $\mathrm{kg\,m^{-2}}$. The free-vortex coefficients and
-velocities are
+$a,b,d$ have units $\mathrm{kg\,m^{-2}}$. The free-vortex coefficients and velocities are
 
 $$
 \begin{aligned}
@@ -83,9 +61,7 @@ v_L^\theta\big|_{\rm free}&=x(\Omega_p+\mathcal B^\theta\omega).
 \end{aligned}
 $$
 
-A constant $Y\in[0,1]$ represents the mobile fraction of vortices, so the
-population-averaged radial drift is $Yx\mathcal B^x\omega$. $Y$ is an assumed
-mobility, not a pinning-force or thermal-creep calculation.
+A constant $Y\in[0,1]$ represents the mobile fraction of vortices, so the population-averaged radial drift is $Yx\mathcal B^x\omega$. $Y$ is an assumed mobility, not a pinning-force or thermal-creep calculation.
 
 The Newtonian inertia integrals are
 
@@ -100,17 +76,9 @@ I_N&=\frac{8\pi}{3}\int_0^R r^4\rho_b\,dr,\\
 \end{aligned}
 $$
 
-Both axial and cylindrical Gaussian quadratures split at the core interface to
-resolve changes in microphysics and lines tangent to the core. The radial and
-cylindrical evaluations of $I_{v,N}$ are independent consistency checks.
-The code derives the inertia fraction from the radial integral but normalizes
-the drag average by its cylindrical integral to avoid propagating their small
-quadrature mismatch into $\mathcal B_{\rm eff}$.
+Both axial and cylindrical Gaussian quadratures split at the core interface to resolve changes in microphysics and lines tangent to the core. The radial and cylindrical evaluations of $I_{v,N}$ are independent consistency checks. The code derives the inertia fraction from the radial integral but normalizes the drag average by its cylindrical integral to avoid propagating their small quadrature mismatch into $\mathcal B_{\rm eff}$.
 
-The background uses areal radius and $\rho_b$ with a **Newtonian volume element**.
-A common factor $s_I=I_{\rm Hartle}/I_N$ sets $I=I_{\rm Hartle}$ and
-$I_v=s_I I_{v,N}$. It cancels from the inertia fractions and drag average.
-This convention does not supply relativistic entrainment, drag or two-fluid energy.
+The background uses areal radius and $\rho_b$ with a **Newtonian volume element**. A common factor $s_I=I_{\rm Hartle}/I_N$ sets $I=I_{\rm Hartle}$ and $I_v=s_I I_{v,N}$. It cancels from the inertia fractions and drag average. This convention does not supply relativistic entrainment, drag or two-fluid energy.
 
 For uniform microphysics,
 
@@ -118,9 +86,7 @@ $$
 \mathcal B^x=\frac{\mathcal R}{(1+\mathcal R^2)(1-\varepsilon_n)}.
 $$
 
-Radial mobility vanishes for both zero and infinite microscopic drag. At very
-large drag the vortices follow the charged matter and cannot migrate radially.
-Entrainment changes velocities and inertias without itself dissipating energy.
+Radial mobility vanishes for both zero and infinite microscopic drag. At very large drag the vortices follow the charged matter and cannot migrate radially. Entrainment changes velocities and inertias without itself dissipating energy.
 
 ## 3. Rigid projection and heat
 
@@ -142,10 +108,7 @@ J_{\rm spin}&=I_p\Omega_p+I_v\Omega_v,\qquad
 \end{aligned}
 $$
 
-$N$ is signed: positive torque spins up the charged component.
-$\tau_{\rm lag}$ is the local small-lag relaxation time, not a constant assumed
-throughout the inspiral. There is no intrinsic magnetic braking.
-The canonical-variable energy and power satisfy
+$N$ is signed: positive torque spins up the charged component. $\tau_{\rm lag}$ is the local small-lag relaxation time, not a constant assumed throughout the inspiral. There is no intrinsic magnetic braking. The canonical-variable energy and power satisfy
 
 $$
 \begin{aligned}
@@ -166,10 +129,7 @@ $$
 n_v=\frac{2\Omega_v}{\kappa}.
 $$
 
-Integrate over vortex positions and multiply by $Y$ for the mobile population.
-Pinned vortices comove with the crust and dissipate no drag heat in this
-idealization. Permanent $Y=0$ pinning is a limiting control; it does not model
-finite critical lag, unpinning events or glitches.
+Integrate over vortex positions and multiply by $Y$ for the mobile population. Pinned vortices comove with the crust and dissipate no drag heat in this idealization. Permanent $Y=0$ pinning is a limiting control; it does not model finite critical lag, unpinning events or glitches.
 
 At fixed isolated-star angular momentum, the exact heat released is
 
@@ -177,9 +137,7 @@ $$
 Q=\frac{I_pI_v}{2I}(\omega_i^2-\omega_f^2).
 $$
 
-This identity follows from angular-momentum conservation. During driven spin-up,
-$\omega<0$ corresponds to inward vortex drift and increasing $n_v$.
-The exported signed speed is defined operationally as
+This identity follows from angular-momentum conservation. During driven spin-up, $\omega<0$ corresponds to inward vortex drift and increasing $n_v$. The exported signed speed is defined operationally as
 
 $$
 v_{\rm diagnostic}=Y\omega
@@ -187,15 +145,11 @@ v_{\rm diagnostic}=Y\omega
 \sum_j w_j=1,
 $$
 
-where $w_j$ are canonical-inertia quadrature weights. It is a signed rms of the
-mobility-averaged drift over cylindrical radius, not a number-weighted rms speed
-of individual pinned and mobile vortices. A rigid control sets this diagnostic
-to zero and copies its single spin into the canonical-frequency column.
+where $w_j$ are canonical-inertia quadrature weights. It is a signed rms of the mobility-averaged drift over cylindrical radius, not a number-weighted rms speed of individual pinned and mobile vortices. A rigid control sets this diagnostic to zero and copies its single spin into the canonical-frequency column.
 
 ## 4. Quadrupole and circular orbital reaction
 
-The fixed equatorial quadrupole is $\Delta I=\epsilon I$ with total $I$.
-Its orientation follows $\theta$, the charged component's figure angle:
+The fixed equatorial quadrupole is $\Delta I=\epsilon I$ with total $I$. Its orientation follows $\theta$, the charged component's figure angle:
 
 $$
 U(r,\gamma)=-\frac34\frac{GM'\Delta I}{r^3}\cos\gamma,\qquad
@@ -203,16 +157,14 @@ N=-\frac{\partial U}{\partial\theta}
 =-\frac32\frac{GM'\Delta I}{r^3}\sin\gamma.
 $$
 
-Normalizing the same $\epsilon$ to $I_p$ would change the imposed quadrupole.
-In the rigid limit with negligible orbital reaction,
+Normalizing the same $\epsilon$ to $I_p$ would change the imposed quadrupole. In the rigid limit with negligible orbital reaction,
 
 $$
 \ddot\gamma+3\epsilon\frac{GM'}{r^3}\sin\gamma
 +2\dot\Omega_{\rm orb}=0.
 $$
 
-To include reaction, the code uses orbital angular momentum $L$ as the circular
-Hamiltonian action. It allows the circular radius to change with $L$:
+To include reaction, the code uses orbital angular momentum $L$ as the circular Hamiltonian action. It allows the circular radius to change with $L$:
 
 $$
 \begin{aligned}
@@ -224,11 +176,7 @@ H&=E_K+U+E_{\rm spin},&
 \end{aligned}
 $$
 
-Removing angular momentum increases the Keplerian frequency; a fixed
-$\mu r^2$ orbital inertia would give the wrong reaction on a circular sequence.
-The quadrupole potential is evaluated on the unperturbed circular relation.
-The small $-6U/L$ correction keeps the selected Hamiltonian energy accounting
-consistent; this remains a leading-order circular reduction.
+Removing angular momentum increases the Keplerian frequency; a fixed $\mu r^2$ orbital inertia would give the wrong reaction on a circular sequence. The quadrupole potential is evaluated on the unperturbed circular relation. The small $-6U/L$ correction keeps the selected Hamiltonian energy accounting consistent; this remains a leading-order circular reduction.
 
 With leading quadrupole GW luminosity,
 
@@ -250,37 +198,22 @@ $$
 \frac{\mathcal F_{\rm GW}}{\Omega_{\rm orb}}=0.
 $$
 
-The spin-only balance follows directly from
-$\dot E_{\rm spin}=\Omega_pN-P_{\rm heat}$. The code records both
-$W_\star=\int\Omega_pN\,dt$ and $W_{\rm orbit}=\int\Omega_{\rm orb}N\,dt$.
-Their difference reflects the changing interaction energy and circular radius.
-Heat enters only through internal friction; adding it again to the orbital
-torque would double-count energy transfer. Integrated heat is not a temperature.
+The spin-only balance follows directly from $\dot E_{\rm spin}=\Omega_pN-P_{\rm heat}$. The code records both $W_\star=\int\Omega_pN\,dt$ and $W_{\rm orbit}=\int\Omega_{\rm orb}N\,dt$. Their difference reflects the changing interaction energy and circular radius. Heat enters only through internal friction; adding it again to the orbital torque would double-count energy transfer. Integrated heat is not a temperature.
 
-The point-particle reference sets $U=N=0$. Post-Newtonian terms, eccentricity,
-dynamical tides and radiation from stellar rotation are omitted.
-Both orbital frequencies are exported; their small
-difference is the conservative correction above.
+The point-particle reference sets $U=N=0$. Post-Newtonian terms, eccentricity, dynamical tides and radiation from stellar rotation are omitted. Both orbital frequencies are exported; their small difference is the conservative correction above.
 
 ## 5. Initial conditions and phase diagnostic
 
-`paper` starts with $n_0/(2\pi)=0.4\,\mathrm{Hz}$,
-$\Omega_{p,0}/(2\pi)=\Omega_{v,0}/(2\pi)=0.5\,\mathrm{Hz}$ and
-$\gamma_0=-2(0.3986)$. Whether resonance capture occurs is determined by the
-evolution. `locked` starts at $n_0/(2\pi)=0.6\,\mathrm{Hz}$ with
+`paper` starts with $n_0/(2\pi)=0.4\,\mathrm{Hz}$, $\Omega_{p,0}/(2\pi)=\Omega_{v,0}/(2\pi)=0.5\,\mathrm{Hz}$ and $\gamma_0=-2(0.3986)$. Whether resonance capture occurs is determined by the evolution. `locked` starts at $n_0/(2\pi)=0.6\,\mathrm{Hz}$ with
 
 $$
 \sin\gamma_*=-\frac{2\dot n_{\rm GW}}{3\epsilon(M'/M_t)n^2},\qquad
 \cos\gamma_*>0,\qquad \Omega_{p,0}=\Omega_{v,0}=\Omega_{{\rm orb},0}.
 $$
 
-This is the stable rigid equilibrium phase with the point-particle chirp;
-finite backreaction and the developing two-component lag can cause a transient.
-Every drag-sweep case starts independently this way, so it describes evolution
-conditional on capture rather than capture probability.
+This is the stable rigid equilibrium phase with the point-particle chirp; finite backreaction and the developing two-component lag can cause a transient. Every drag-sweep case starts independently this way, so it describes evolution conditional on capture rather than capture probability.
 
-The phase diagnostic is the time-domain accumulated GW phase at matched Kepler
-frequency relative to the point-particle trajectory, with equal initial phase:
+The phase diagnostic is the time-domain accumulated GW phase at matched Kepler frequency relative to the point-particle trajectory, with equal initial phase:
 
 $$
 \Delta\Phi(n)=2\int_{n_0}^n
@@ -288,33 +221,20 @@ $$
 -\frac{\tilde n}{\dot n_{\rm pp}(\tilde n)}\right)d\tilde n.
 $$
 
-It combines conservative spin-up, altered locking and heating. It is not an
-isolated dissipative waveform term or the paper's stationary-phase correction.
+It combines conservative spin-up, altered locking and heating. It is not an isolated dissipative waveform term or the paper's stationary-phase correction.
 
 ## 6. Numerical state and scope
 
-`Binary.quantities` divides torques, energies and angular momenta by the saved
-stellar $I$. Its `ell`, `u`, `torque` and `flux` mean $L/I$, $U/I$, $N/I$ and
-$\mathcal F_{\rm GW}/I$. Physical SI outputs restore $I$.
-The integration uses $s=\ln n$, with $dt/ds=n/\dot n$:
+`Binary.quantities` divides torques, energies and angular momenta by the saved stellar $I$. Its `L_over_I`, `U_over_I`, `N_over_I` and `gw_flux_over_I` mean $L/I$, $U/I$, $N/I$ and $\mathcal F_{\rm GW}/I$. Physical SI outputs restore $I$. The integration uses $s=\ln n$, with $dt/ds=n/\dot n$:
 
 | Index | `evolve` state | Meaning |
 |---|---|---|
-| 0–2 | `phase`, `op`, `ov` | $\gamma,\Omega_p,\Omega_v$ |
+| 0–2 | `gamma`, `omega_p`, `omega_v` | $\gamma,\Omega_p,\Omega_v$ |
 | 3 | `time` | Elapsed seconds |
-| 4–6 | `heat`, `egw`, `jgw` | $Q/I,E_{\rm GW}/I,J_{\rm GW}/I$ |
-| 7–8 | `wstar`, `worb` | $W_\star/I,W_{\rm orbit}/I$ |
-| 9 | `dephase` | $\Delta\Phi$ |
+| 4–6 | `heat_over_I`, `gw_energy_over_I`, `gw_angular_momentum_over_I` | $Q/I,E_{\rm GW}/I,J_{\rm GW}/I$ |
+| 7–8 | `star_torque_work_over_I`, `orbit_torque_work_over_I` | $W_\star/I,W_{\rm orbit}/I$ |
+| 9 | `gw_phase_difference` | $\Delta\Phi$ |
 
-Monotone $\dot n>0$ and positive $\Omega_v$ are enforced. Paper-start circulation
-uses explicit DOP853; locked trajectories use implicit Radau for stiff drag
-relaxation. A complex-step Jacobian differentiates the smooth RHS without
-finite-difference cancellation in zero diagnostic components.
-Exported samples combine the adaptive solver nodes with a dense uniform
-log-frequency grid. CSV export retains at most 15,000 rows.
+Monotone $\dot n>0$ and positive $\Omega_v$ are enforced. Paper-start circulation uses explicit DOP853; locked trajectories use implicit Radau for stiff drag relaxation. A complex-step Jacobian differentiates the smooth RHS without finite-difference cancellation in zero diagnostic components. Exported samples combine the adaptive solver nodes with a dense uniform log-frequency grid. CSV export retains at most 15,000 rows.
 
-The rigid projection cannot resolve differential canonical rotation, vortex
-pile-up, bending, turbulence, finite-strength unpinning or thermal creep.
-Large lag or strongly variable mobility may invalidate the approximation.
-Pairing, temperature, cooling, magnetic stress evolution and changes in the
-quadrupole are not evolved. APR boundaries remain assumed density labels.
+The rigid projection cannot resolve differential canonical rotation, vortex pile-up, bending, turbulence, finite-strength unpinning or thermal creep. Large lag or strongly variable mobility may invalidate the approximation. Pairing, temperature, cooling, magnetic stress evolution and changes in the quadrupole are not evolved. APR boundaries remain assumed density labels.

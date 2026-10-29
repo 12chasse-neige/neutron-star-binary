@@ -31,7 +31,7 @@ def main():
         raise ValueError("Require positive neutron-drip density below the core-crust density.")
     eos = load_apr(args.data)
     star = solve_target(eos, cfg["target_mass_msun"],
-                        surface_h=cfg["surface_pseudo_enthalpy"],
+                        surface_pseudo_enthalpy=cfg["surface_pseudo_enthalpy"],
                         rtol=cfg["relative_tolerance"],
                         max_step_km=cfg["max_step_km"])
     summary = build_summary(star, cfg)

@@ -47,8 +47,8 @@ def main():
         Rebuild the line integrals when microphysics changes; sweep runs reuse
         the fiducial reservoir. Traces are decimated for export only.
         """
-        res = reservoir if this_cfg is cfg else build_reservoir(this_cfg, background)
-        trace = Binary(this_cfg, res, rigid=rigid).evolve(initialization)
+        scenario_reservoir = reservoir if this_cfg is cfg else build_reservoir(this_cfg, background)
+        trace = Binary(this_cfg, scenario_reservoir, rigid=rigid).evolve(initialization)
         summary = {"rigid": rigid, "initialization": initialization,
                    **summarize_trace(trace)}
         if record:

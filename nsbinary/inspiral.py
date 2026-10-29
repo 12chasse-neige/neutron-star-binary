@@ -33,23 +33,24 @@ def gauss_interval(lo, hi, order):
 class Reservoir:
     """Canonical reservoir calibrated to the saved Hartle total inertia.
 
-    total_I: kg m^2; fv: I_v/I; B: Y times the inertia-weighted free mobility.
-    ``columns`` holds unscaled Newtonian line columns and normalized quadrature
-    weights. Inertia fractions and B are unchanged by the common rescaling.
+    total_I: kg m^2; I_v_fraction: I_v/I; B_eff: Y times the
+    inertia-weighted free mobility. ``columns`` holds unscaled Newtonian line
+    columns and normalized quadrature weights. Inertia fractions and B_eff are
+    unchanged by the common rescaling.
     """
     total_I: float
-    fv: float
-    B: float
+    I_v_fraction: float
+    B_eff: float
     metadata: dict
     columns: dict
 
     @property
-    def fp(self):
-        return 1 - self.fv
+    def I_p_fraction(self):
+        return 1 - self.I_v_fraction
 
 
 def build_reservoir(cfg, background):
-    """Evaluate AP a, b, d, Bx and their inertia-weighted cylindrical mean.
+    """Evaluate AP a, b, d, B_radial_free and their inertia-weighted cylindrical mean.
 
     Uses Newtonian integrals of baryon rest density on the saved TOV areal-radius
     profile, then multiplies all inertias by one factor to match the Hartle I.
@@ -61,85 +62,93 @@ def build_reservoir(cfg, background):
     # The structure export uses km and g/cm^3; every line and volume integral
     # below uses m and kg/m^3. Use rest density, not energy-equivalent density.
     radius = profile["radius_km"] * 1000
-    rho = PchipInterpolator(radius, profile["rest_mass_density_g_cm3"] * 1000)
-    rc = star["core_crust_boundary"]["radius_km"] * 1000
-    rd = star["neutron_drip_boundary"]["radius_km"] * 1000
-    outer = star["radius_km"] * 1000
-    nq = cfg["cylindrical_quadrature_order"]
-    nz = cfg["line_quadrature_order"]
+    rest_mass_density = PchipInterpolator(radius, profile["rest_mass_density_g_cm3"] * 1000)
+    core_radius = star["core_crust_boundary"]["radius_km"] * 1000
+    drip_radius = star["neutron_drip_boundary"]["radius_km"] * 1000
+    stellar_radius = star["radius_km"] * 1000
+    cylindrical_quadrature_order = cfg["cylindrical_quadrature_order"]
+    line_quadrature_order = cfg["line_quadrature_order"]
     # Zone tuple: inner radius, outer radius, neutron mass fraction,
-    # epsilon_n = 1 - m*_n/m_n, eta/(kappa*rho_n). No neutron reservoir beyond rd.
-    zones = [(0., rc, cfg["core_neutron_fraction"], cfg["core_entrainment_epsilon_n"], cfg["core_drag_ratio"]),
-             (rc, rd, cfg["inner_crust_neutron_fraction"], cfg["inner_crust_entrainment_epsilon_n"], cfg["inner_crust_drag_ratio"])]
-    for _, _, xn, en, drag in zones:
-        if not (0 <= xn < 1 and en < 1-xn and drag >= 0):
+    # epsilon_n = 1 - m*_n/m_n, eta/(kappa*rho_n). No neutron reservoir beyond
+    # the neutron-drip radius.
+    zones = [(0., core_radius, cfg["core_neutron_fraction"], cfg["core_entrainment_epsilon_n"], cfg["core_drag_ratio"]),
+             (core_radius, drip_radius, cfg["inner_crust_neutron_fraction"], cfg["inner_crust_entrainment_epsilon_n"], cfg["inner_crust_drag_ratio"])]
+    for _, _, neutron_fraction, entrainment_epsilon, drag_ratio in zones:
+        if not (0 <= neutron_fraction < 1 and entrainment_epsilon < 1-neutron_fraction and drag_ratio >= 0):
             raise ValueError("Require 0 <= x_n < 1, epsilon_n < x_p, drag >= 0.")
     if not 0 <= cfg["unpinned_fraction"] <= 1:
         raise ValueError("Unpinned fraction must lie in [0,1].")
     # Integrate all material for I_N; the outer crust contributes to the normal
     # component even though it contributes nothing to the superfluid line columns.
-    total_newton = 0.
+    newtonian_total_inertia = 0.
     zone_inertias = []
-    for lo, hi in [(0, rc), (rc, rd), (rd, outer)]:
-        rr, ww = gauss_interval(lo, hi, 2*nq)
-        zone_inertias.append(8*np.pi/3 * np.sum(ww * rr**4 * rho(rr)))
-        total_newton += zone_inertias[-1]
-    iv_radial = sum(zone_inertias[i]*z[2]/(1-z[3]) for i, z in enumerate(zones))
-    # Splitting at rc resolves the tangent-to-core boundary. Avoid endpoint 0/0.
-    xs, xw = zip(*(gauss_interval(lo, hi, nq) for lo, hi in [(0, rc), (rc, rd)]))
-    x, wx = np.concatenate(xs), np.concatenate(xw)
+    for lo, hi in [(0, core_radius), (core_radius, drip_radius), (drip_radius, stellar_radius)]:
+        radius_nodes, radius_weights = gauss_interval(
+            lo, hi, 2*cylindrical_quadrature_order)
+        zone_inertias.append(8*np.pi/3 * np.sum(
+            radius_weights * radius_nodes**4 * rest_mass_density(radius_nodes)))
+        newtonian_total_inertia += zone_inertias[-1]
+    I_v_radial = sum(zone_inertias[i]*z[2]/(1-z[3]) for i, z in enumerate(zones))
+    # Splitting at the core radius resolves the tangent-to-core boundary. Avoid
+    # endpoint 0/0.
+    x_zones, x_zone_weights = zip(*(gauss_interval(lo, hi, cylindrical_quadrature_order) for lo, hi in [(0, core_radius), (core_radius, drip_radius)]))
+    x, x_weights = np.concatenate(x_zones), np.concatenate(x_zone_weights)
     a, b, d = np.zeros_like(x), np.zeros_like(x), np.zeros_like(x)
-    for j, xx in enumerate(x):
-        for lo, hi, xn, en, drag in zones:
-            if xx >= hi:
+    for j, x_line in enumerate(x):
+        for lo, hi, neutron_fraction, entrainment_epsilon, drag_ratio in zones:
+            if x_line >= hi:
                 continue
             # Positive-z segment inside this spherical shell. Double it for
             # reflection symmetry; splitting shells prevents averaging a jump
             # in entrainment or drag across an unresolved quadrature interval.
-            zlo = np.sqrt(max(lo*lo-xx*xx, 0))
-            zhi = np.sqrt(hi*hi-xx*xx)
-            zz, wz = gauss_interval(zlo, zhi, nz)
-            column = 2*xn*np.sum(wz*rho(np.hypot(xx, zz)))
-            a[j] += column
-            b[j] += column/(1-en)
-            d[j] += column*drag
-    # AP free-vortex response. All three columns have units kg/m^2, so bx and
-    # btheta are dimensionless. Large d suppresses radial motion rather than
+            z_lower = np.sqrt(max(lo*lo-x_line*x_line, 0))
+            z_upper = np.sqrt(hi*hi-x_line*x_line)
+            z_nodes, z_weights = gauss_interval(
+                z_lower, z_upper, line_quadrature_order)
+            line_column = 2*neutron_fraction*np.sum(
+                z_weights*rest_mass_density(np.hypot(x_line, z_nodes)))
+            a[j] += line_column
+            b[j] += line_column/(1-entrainment_epsilon)
+            d[j] += line_column*drag_ratio
+    # AP free-vortex response. All three columns have units kg/m^2, so the two
+    # B columns are dimensionless. Large d suppresses radial motion rather than
     # forcing arbitrarily fast material corotation.
-    bx = d*b/(a*a+d*d)
-    btheta = a*b/(a*a+d*d)
-    iw = 2*np.pi * wx*x**3*b
-    iv_cyl = np.sum(iw)
-    # fv from the independently evaluated spherical integral; the cylindrical
-    # weights are normalized separately so B is not biased by quadrature error.
-    fv = iv_radial/total_newton
-    Bfree = float(np.sum(iw*bx)/iv_cyl)
-    B = cfg["unpinned_fraction"] * Bfree
-    if not 0 < fv < 1:
+    B_radial_free = d*b/(a*a+d*d)
+    B_azimuthal_free = a*b/(a*a+d*d)
+    inertia_weights = 2*np.pi * x_weights*x**3*b
+    I_v_cylindrical = np.sum(inertia_weights)
+    # I_v_fraction comes from the independently evaluated spherical integral;
+    # the cylindrical weights are normalized separately so B_free is not biased
+    # by quadrature error.
+    I_v_fraction = I_v_radial/newtonian_total_inertia
+    B_free = float(np.sum(inertia_weights*B_radial_free)/I_v_cylindrical)
+    B_eff = cfg["unpinned_fraction"] * B_free
+    if not 0 < I_v_fraction < 1:
         raise ValueError("The effective inertia matrix must be positive.")
     metadata = {
-        "stellar_mass_msun": star["mass_msun"], "radius_m": outer,
-        "core_radius_m": rc, "neutron_drip_radius_m": rd,
+        "stellar_mass_msun": star["mass_msun"], "radius_m": stellar_radius,
+        "core_radius_m": core_radius, "neutron_drip_radius_m": drip_radius,
         "total_I_kg_m2": star["moment_of_inertia_kg_m2"],
-        "newtonian_rest_density_I_kg_m2": total_newton,
-        "common_Hartle_rescaling": star["moment_of_inertia_kg_m2"]/total_newton,
-        "effective_v_inertia_fraction": fv, "effective_p_inertia_fraction": 1-fv,
-        "core_material_inertia_fraction": zone_inertias[0]/total_newton,
-        "inner_crust_material_inertia_fraction": zone_inertias[1]/total_newton,
-        "outer_crust_material_inertia_fraction": zone_inertias[2]/total_newton,
-        "mean_B_free": Bfree, "mean_B_effective": B,
+        "newtonian_rest_density_I_kg_m2": newtonian_total_inertia,
+        "common_Hartle_rescaling": star["moment_of_inertia_kg_m2"]/newtonian_total_inertia,
+        "effective_v_inertia_fraction": I_v_fraction, "effective_p_inertia_fraction": 1-I_v_fraction,
+        "core_material_inertia_fraction": zone_inertias[0]/newtonian_total_inertia,
+        "inner_crust_material_inertia_fraction": zone_inertias[1]/newtonian_total_inertia,
+        "outer_crust_material_inertia_fraction": zone_inertias[2]/newtonian_total_inertia,
+        "mean_B_free": B_free, "mean_B_effective": B_eff,
         "kappa_m2_per_s": KAPPA,
     }
     columns = {"cylindrical_radius_m": x, "a_kg_m2": a, "b_kg_m2": b,
-               "d_kg_m2": d, "B_radial_free": bx, "B_azimuthal_free": btheta,
-               "inertia_weight": iw/iv_cyl}
-    return Reservoir(star["moment_of_inertia_kg_m2"], fv, B, metadata, columns)
+               "d_kg_m2": d, "B_radial_free": B_radial_free, "B_azimuthal_free": B_azimuthal_free,
+               "inertia_weight": inertia_weights/I_v_cylindrical}
+    return Reservoir(star["moment_of_inertia_kg_m2"], I_v_fraction, B_eff, metadata, columns)
 
 
 class Binary:
     """Circular Hamiltonian plus quadrupole torque and leading GW radiation.
 
-    n denotes the Kepler frequency inferred from orbital angular momentum L.
+    omega_kepler denotes the Kepler frequency inferred from orbital angular
+    momentum L.
     Keeping U(L, gamma) in the Hamiltonian adds its small frequency correction;
     the full system then conserves energy and angular momentum when GW and
     mutual friction are disabled. This avoids treating heat as an extra tidal
@@ -150,47 +159,49 @@ class Binary:
         """Set fixed masses/quadrupole; ``rigid`` is the single-rotator control."""
         self.cfg, self.reservoir = cfg, reservoir
         self.I = reservoir.total_I
-        self.fv = 0. if rigid else reservoir.fv
-        self.fp = 1-self.fv
-        self.B = 0. if rigid else reservoir.B
-        m = reservoir.metadata["stellar_mass_msun"]*MSUN
-        q = cfg["mass_ratio_companion_over_ns"]
-        if q <= 0 or cfg["ellipticity"] < 0:
+        self.I_v_fraction = 0. if rigid else reservoir.I_v_fraction
+        self.I_p_fraction = 1-self.I_v_fraction
+        self.B_eff = 0. if rigid else reservoir.B_eff
+        neutron_star_mass = reservoir.metadata["stellar_mass_msun"]*MSUN
+        mass_ratio = cfg["mass_ratio_companion_over_ns"]
+        if mass_ratio <= 0 or cfg["ellipticity"] < 0:
             raise ValueError("Require positive mass ratio and nonnegative ellipticity.")
-        self.mt, self.mu = m*(1+q), m*q/(1+q)
-        self.ratio = q/(1+q)
-        self.eps = cfg["ellipticity"]
+        self.total_mass, self.reduced_mass = neutron_star_mass*(1+mass_ratio), neutron_star_mass*mass_ratio/(1+mass_ratio)
+        self.companion_mass_fraction = mass_ratio/(1+mass_ratio)
+        self.ellipticity = cfg["ellipticity"]
         # Divide budgets by I to avoid enormous SI state magnitudes. The
         # equations remain SI; torque/I is an angular acceleration and flux/I
         # is specific power. Restore I only when exporting physical budgets.
-        self.ell_coeff = self.mu*(G*self.mt)**(2/3)/self.I
-        self.flux_coeff = 32/5 * G**(7/3)/c**5*self.mu**2*self.mt**(4/3)/self.I
+        self.L_over_I_coefficient = self.reduced_mass*(G*self.total_mass)**(2/3)/self.I
+        self.gw_flux_over_I_coefficient = 32/5 * G**(7/3)/c**5*self.reduced_mass**2*self.total_mass**(4/3)/self.I
 
-    def quantities(self, n, phase, op, ov):
+    def quantities(self, omega_kepler, gamma, omega_p, omega_v):
         """Evaluate physical rates and budgets at scalar or array states.
 
-        Return order: L/I, U/I, N/I, Omega_orb, F_GW/I, dn/dt,
-        dOmega_p/dt, dOmega_v/dt, P_heat/I. Here n is a Kepler angular
-        frequency, not Hz, and phase = 2(theta - f). Positive N spins up p.
+        Return order: L_over_I, U_over_I, N_over_I, omega_orb, gw_flux_over_I,
+        omega_kepler_dot, omega_p_dot, omega_v_dot, P_heat_over_I. Here
+        omega_kepler is the Kepler angular frequency, not Hz, and gamma =
+        2(theta - f). Positive N_over_I spins up the charged component.
         """
-        ell = self.ell_coeff*n**(-1/3)  # L/I
-        u = -.75*self.ratio*self.eps*n*n*np.cos(phase)  # U/I
-        torque = -1.5*self.ratio*self.eps*n*n*np.sin(phase)  # N/I
-        orb = n-6*u/ell  # d(E_Kep+U)/dL
-        flux = self.flux_coeff*n**(10/3)
+        L_over_I = self.L_over_I_coefficient*omega_kepler**(-1/3)  # L/I
+        U_over_I = -.75*self.companion_mass_fraction*self.ellipticity*omega_kepler*omega_kepler*np.cos(gamma)  # U/I
+        N_over_I = -1.5*self.companion_mass_fraction*self.ellipticity*omega_kepler*omega_kepler*np.sin(gamma)  # N/I
+        omega_orb = omega_kepler-6*U_over_I/L_over_I  # d(E_Kep+U)/dL
+        gw_flux_over_I = self.gw_flux_over_I_coefficient*omega_kepler**(10/3)
         # Circular reaction: L proportional to n^(-1/3). Removing orbital
         # angular momentum raises n. F_J = F_GW/Omega_orb preserves dH/dt = -F_GW
         # for this Hamiltonian, including its small conservative correction.
-        ndot = 3*n/ell*(torque+flux/orb)
-        k = 2*self.B*ov
-        vdot = -k*(ov-op)
-        # Friction exchanges spin momentum internally: fp*pdot + fv*vdot = N/I.
-        # Heating follows from the same exchange and is NOT another orbit torque.
-        pdot = (torque-self.fv*vdot)/self.fp
-        if self.fv == 0:
-            vdot = pdot
-        heat = self.fv*k*(ov-op)**2 if self.fv else np.zeros_like(op)
-        return ell, u, torque, orb, flux, ndot, pdot, vdot, heat
+        omega_kepler_dot = 3*omega_kepler/L_over_I*(N_over_I+gw_flux_over_I/omega_orb)
+        drag_rate = 2*self.B_eff*omega_v
+        omega_v_dot = -drag_rate*(omega_v-omega_p)
+        # Friction exchanges spin momentum internally:
+        # I_p_fraction*dOmega_p/dt + I_v_fraction*dOmega_v/dt = N/I. Heating
+        # follows from the same exchange and is NOT another orbital torque.
+        omega_p_dot = (N_over_I-self.I_v_fraction*omega_v_dot)/self.I_p_fraction
+        if self.I_v_fraction == 0:
+            omega_v_dot = omega_p_dot
+        P_heat_over_I = self.I_v_fraction*drag_rate*(omega_v-omega_p)**2 if self.I_v_fraction else np.zeros_like(omega_p)
+        return L_over_I, U_over_I, N_over_I, omega_orb, gw_flux_over_I, omega_kepler_dot, omega_p_dot, omega_v_dot, P_heat_over_I
 
     def evolve(self, initialization="locked", sample_count=5000):
         """Integrate in log(n) and return the exported trace columns.
@@ -202,96 +213,115 @@ class Binary:
         """
         cfg = self.cfg
         if initialization == "paper":
-            n0 = 2*np.pi*cfg["initial_orbital_frequency_hz"]
-            op0 = ov0 = 2*np.pi*cfg["initial_spin_frequency_hz"]
-            phase0 = -2*cfg["initial_f_minus_theta_rad"]
+            omega_kepler_initial = 2*np.pi*cfg["initial_orbital_frequency_hz"]
+            omega_p_initial = omega_v_initial = 2*np.pi*cfg["initial_spin_frequency_hz"]
+            gamma_initial = -2*cfg["initial_f_minus_theta_rad"]
         elif initialization == "locked":
             # Use the rigid point-particle chirp to select a stable phase, then
             # match both spins to the corrected Hamiltonian orbital frequency.
             # No constraint subsequently forces the components to remain locked.
-            n0 = 2*np.pi*cfg["locked_start_orbital_frequency_hz"]
-            ndot0 = 3*self.flux_coeff*n0**(11/3)/self.ell_coeff
-            sine = -2*ndot0/(3*self.ratio*self.eps*n0*n0) if self.eps else 0.
-            if abs(sine) >= 1:
+            omega_kepler_initial = 2*np.pi*cfg["locked_start_orbital_frequency_hz"]
+            omega_kepler_dot_initial = 3*self.gw_flux_over_I_coefficient*omega_kepler_initial**(11/3)/self.L_over_I_coefficient
+            sin_gamma = -2*omega_kepler_dot_initial/(3*self.companion_mass_fraction*self.ellipticity*omega_kepler_initial*omega_kepler_initial) if self.ellipticity else 0.
+            if abs(sin_gamma) >= 1:
                 raise ValueError("Locked initialization is above the rigid breaking frequency.")
-            phase0 = np.arcsin(sine)
-            op0 = ov0 = self.quantities(n0, phase0, n0, n0)[3]
+            gamma_initial = np.arcsin(sin_gamma)
+            omega_p_initial = omega_v_initial = self.quantities(omega_kepler_initial, gamma_initial, omega_kepler_initial, omega_kepler_initial)[3]
         else:
             raise ValueError("Initialization must be 'paper' or 'locked'.")
-        n1 = 2*np.pi*cfg["final_orbital_frequency_hz"]
-        if not 0 < n0 < n1 or op0 <= 0:
+        omega_kepler_final = 2*np.pi*cfg["final_orbital_frequency_hz"]
+        if not 0 < omega_kepler_initial < omega_kepler_final or omega_p_initial <= 0:
             raise ValueError("Require positive initial spin and increasing orbital frequency.")
-        # Variables: phase, Omega_p, Omega_v, t, Q/I, E_GW/I, J_GW/I,
-        # W_star/I, W_orbit/I, phase difference from the point-particle chirp.
-        initial = np.array([phase0, op0, ov0, 0, 0, 0, 0, 0, 0, 0.])
+        # Variables: gamma, Omega_p, Omega_v, t, Q/I, E_GW/I, J_GW/I,
+        # W_star/I, W_orbit/I, GW phase difference from the point-particle
+        # chirp.
+        initial_state = np.array([gamma_initial, omega_p_initial, omega_v_initial, 0, 0, 0, 0, 0, 0, 0.])
 
-        def rhs(logn, y):
-            n = np.exp(logn)
-            phase, op, ov = y[:3]
-            ell, u, torque, orb, flux, ndot, pdot, vdot, heat = self.quantities(n, phase, op, ov)
-            if np.real(ndot) <= 0 or np.real(ov) <= 0:
+        def rhs(log_omega_kepler, state):
+            omega_kepler = np.exp(log_omega_kepler)
+            gamma, omega_p, omega_v = state[:3]
+            (L_over_I, U_over_I, N_over_I, omega_orb, gw_flux_over_I,
+             omega_kepler_dot, omega_p_dot, omega_v_dot,
+             P_heat_over_I) = self.quantities(omega_kepler, gamma, omega_p, omega_v)
+            if np.real(omega_kepler_dot) <= 0 or np.real(omega_v) <= 0:
                 raise RuntimeError("Frequency ceased to be monotone or vortex rotation reversed.")
-            dt = n/ndot
-            ndot_pp = 3*flux/ell
-            # dt here is dt/d(log n), not an integration step. The final term
-            # accumulates 2 integral(Omega_orb/ndot - n/ndot_pp) dn, comparing
+            # The independent variable is log(omega_kepler), so this factor is
+            # dt/dlog(omega_kepler), not an integration step. The final term
+            # accumulates 2 integral(omega_orb/omega_kepler_dot - omega_kepler/
+            # omega_kepler_dot_point_particle) d(omega_kepler), comparing
             # time-domain GW phases at equal Kepler frequency and initial phase.
-            return np.array([2*(op-orb)*dt, pdot*dt, vdot*dt, dt,
-                             heat*dt, flux*dt, flux/orb*dt, op*torque*dt,
-                             orb*torque*dt, 2*n*(orb/ndot-n/ndot_pp)])
+            dt_dlog_omega_kepler = omega_kepler/omega_kepler_dot
+            omega_kepler_dot_point_particle = 3*gw_flux_over_I/L_over_I
+            return np.array([2*(omega_p-omega_orb)*dt_dlog_omega_kepler,
+                             omega_p_dot*dt_dlog_omega_kepler,
+                             omega_v_dot*dt_dlog_omega_kepler,
+                             dt_dlog_omega_kepler,
+                             P_heat_over_I*dt_dlog_omega_kepler,
+                             gw_flux_over_I*dt_dlog_omega_kepler,
+                             gw_flux_over_I/omega_orb*dt_dlog_omega_kepler,
+                             omega_p*N_over_I*dt_dlog_omega_kepler,
+                             omega_orb*N_over_I*dt_dlog_omega_kepler,
+                             2*omega_kepler*(omega_orb/omega_kepler_dot
+                                              - omega_kepler/omega_kepler_dot_point_particle)])
 
         atol = np.array([cfg["phase_absolute_tolerance_rad"], 1e-10, 1e-10,
                          1e-5, 1e-9, 1e-5, 1e-7, 1e-9, 1e-9, 1e-7])
 
-        def jacobian(logn, y):
+        def jacobian(log_omega_kepler, state):
             # Complex-step derivatives also handle identically zero diagnostic
             # variables without finite-difference step escalation.
-            perturbation = 1e-24j*np.eye(len(y))
-            return np.column_stack([np.imag(rhs(logn, y+delta))/1e-24 for delta in perturbation])
+            perturbation = 1e-24j*np.eye(len(state))
+            return np.column_stack([np.imag(rhs(log_omega_kepler, state+delta))/1e-24
+                                    for delta in perturbation])
 
         # Before capture the circulation is fast compared with friction; an
         # explicit high-order solver is much faster. Locked drag sweeps include
         # stiff relaxation and use an implicit solver.
         method = "DOP853" if initialization == "paper" else "Radau"
         options = {"jac": jacobian} if method == "Radau" else {}
-        solution = solve_ivp(rhs, (np.log(n0), np.log(n1)), initial, method=method,
+        solution = solve_ivp(rhs, (np.log(omega_kepler_initial), np.log(omega_kepler_final)), initial_state, method=method,
                              rtol=cfg["relative_tolerance"], atol=atol,
                              dense_output=True, max_step=.015, **options)
         if not solution.success:
             raise RuntimeError(solution.message)
         # Combine the adaptive mesh with dense log-frequency sampling for export.
-        logn = np.unique(np.r_[np.linspace(np.log(n0), np.log(n1), sample_count), solution.t])
-        n = np.exp(logn)
-        y = solution.sol(logn)
-        phase, op, ov, time, heat, egw, jgw, wstar, worb, dephase = y
-        ell, u, torque, orb, flux, ndot, pdot, vdot, power = self.quantities(n, phase, op, ov)
-        spin = .5*(self.fp*op*op+self.fv*ov*ov)
-        eorb = -.5*ell*n
-        tau = np.full_like(ov, np.inf) if self.B == 0 else self.fp/(2*self.B*ov)
+        log_omega_kepler = np.unique(np.r_[np.linspace(np.log(omega_kepler_initial), np.log(omega_kepler_final), sample_count), solution.t])
+        omega_kepler = np.exp(log_omega_kepler)
+        state = solution.sol(log_omega_kepler)
+        (gamma, omega_p, omega_v, time, heat_over_I, gw_energy_over_I,
+         gw_angular_momentum_over_I, star_torque_work_over_I,
+         orbit_torque_work_over_I,
+         gw_phase_difference) = state
+        (L_over_I, U_over_I, N_over_I, omega_orb, gw_flux_over_I,
+         omega_kepler_dot, omega_p_dot, omega_v_dot,
+         P_heat_over_I) = self.quantities(omega_kepler, gamma, omega_p, omega_v)
+        spin_energy_over_I = .5*(self.I_p_fraction*omega_p*omega_p+self.I_v_fraction*omega_v*omega_v)
+        orbital_energy_over_I = -.5*L_over_I*omega_kepler
+        lag_relaxation_time = np.full_like(omega_v, np.inf) if self.B_eff == 0 else self.I_p_fraction/(2*self.B_eff*omega_v)
         # Inertia-weighted rms of x*Bx, then multiply by signed lag and Y.
         # This is rms over radius of the mobility-averaged drift, not an rms
         # over individual pinned/mobile vortices.
-        radial_rms = np.sqrt(np.sum(reservoir_weights(self.reservoir)*
+        vortex_radial_velocity_rms = np.sqrt(np.sum(reservoir_weights(self.reservoir)*
                             (self.reservoir.columns["cylindrical_radius_m"]*
                              self.reservoir.columns["B_radial_free"])**2))
-        radial_rms *= cfg["unpinned_fraction"]*(ov-op)
-        out = {"time_s": time, "kepler_orbital_frequency_hz": n/(2*np.pi),
-               "orbital_frequency_hz": orb/(2*np.pi), "crust_frequency_hz": op/(2*np.pi),
-               "canonical_superfluid_frequency_hz": ov/(2*np.pi), "gamma_rad": phase,
-               "canonical_lag_rad_s": ov-op, "heat_J": heat*self.I,
-               "mutual_friction_power_W": power*self.I, "gw_energy_J": egw*self.I,
-               "star_torque_work_J": wstar*self.I, "orbit_torque_work_J": worb*self.I,
-               "spin_energy_change_J": (spin-spin[0])*self.I,
-               "orbital_binding_energy_loss_J": (eorb[0]-eorb)*self.I,
-               "interaction_energy_change_J": (u-u[0])*self.I,
-               "instantaneous_heat_over_gw_power": power/flux,
-               "lag_relaxation_time_s": tau,
-               "signed_rms_vortex_radial_velocity_m_s": radial_rms,
-               "core_neutron_transport_frequency_hz": (ov-cfg["core_entrainment_epsilon_n"]*op)/(1-cfg["core_entrainment_epsilon_n"])/(2*np.pi),
-               "crust_neutron_transport_frequency_hz": (ov-cfg["inner_crust_entrainment_epsilon_n"]*op)/(1-cfg["inner_crust_entrainment_epsilon_n"])/(2*np.pi),
-               "gw_phase_difference_from_point_particle_rad": dephase,
-               "vortex_areal_density_m2": 2*ov/KAPPA}
-        if self.fv == 0:
+        vortex_radial_velocity_rms *= cfg["unpinned_fraction"]*(omega_v-omega_p)
+        out = {"time_s": time, "kepler_orbital_frequency_hz": omega_kepler/(2*np.pi),
+               "orbital_frequency_hz": omega_orb/(2*np.pi), "crust_frequency_hz": omega_p/(2*np.pi),
+               "canonical_superfluid_frequency_hz": omega_v/(2*np.pi), "gamma_rad": gamma,
+               "canonical_lag_rad_s": omega_v-omega_p, "heat_J": heat_over_I*self.I,
+               "mutual_friction_power_W": P_heat_over_I*self.I, "gw_energy_J": gw_energy_over_I*self.I,
+               "star_torque_work_J": star_torque_work_over_I*self.I, "orbit_torque_work_J": orbit_torque_work_over_I*self.I,
+               "spin_energy_change_J": (spin_energy_over_I-spin_energy_over_I[0])*self.I,
+               "orbital_binding_energy_loss_J": (orbital_energy_over_I[0]-orbital_energy_over_I)*self.I,
+               "interaction_energy_change_J": (U_over_I-U_over_I[0])*self.I,
+               "instantaneous_heat_over_gw_power": P_heat_over_I/gw_flux_over_I,
+               "lag_relaxation_time_s": lag_relaxation_time,
+               "signed_rms_vortex_radial_velocity_m_s": vortex_radial_velocity_rms,
+               "core_neutron_transport_frequency_hz": (omega_v-cfg["core_entrainment_epsilon_n"]*omega_p)/(1-cfg["core_entrainment_epsilon_n"])/(2*np.pi),
+               "crust_neutron_transport_frequency_hz": (omega_v-cfg["inner_crust_entrainment_epsilon_n"]*omega_p)/(1-cfg["inner_crust_entrainment_epsilon_n"])/(2*np.pi),
+               "gw_phase_difference_from_point_particle_rad": gw_phase_difference,
+               "vortex_areal_density_m2": 2*omega_v/KAPPA}
+        if self.I_v_fraction == 0:
             out["signed_rms_vortex_radial_velocity_m_s"] *= 0
         return out
 
