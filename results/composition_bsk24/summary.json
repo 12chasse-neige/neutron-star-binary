@@ -1,0 +1,55 @@
+{
+  "eos": "PCP(BSK24)",
+  "source": "https://zenodo.org/records/14509138",
+  "archive_md5": "57a9af0939caa9c3621baa28471b2dfd",
+  "archive_sha256": "4979bc5735a0f64e774c484901b14533b624017d420aca5da51b3780f00707f6",
+  "radius_km": 12.574148916544564,
+  "central_baryon_density_fm-3": 0.40754247505637103,
+  "core_crust_radius_km": 11.545520669935792,
+  "neutron_drip_radius_km": 12.095310711671166,
+  "central_neutron_percent": 88.12977726841635,
+  "central_proton_percent": 11.87022273158366,
+  "phase_transition_density_brackets_fm-3": {
+    "core_crust": [
+      0.0749994,
+      0.0807555
+    ],
+    "neutron_drip": [
+      0.000255977,
+      0.00027
+    ]
+  },
+  "phase_transition_radius_brackets_km": {
+    "core_crust": [
+      11.538845410718897,
+      11.551167226658084
+    ],
+    "neutron_drip": [
+      12.09299250563874,
+      12.098235649798335
+    ]
+  },
+  "surface_pressure_mev_fm-3": 9.000000079422e-12,
+  "assumptions": [
+    "Local baryon number fractions; not volume or stellar mass fractions.",
+    "All unbound neutrons assumed paired; no temperature/gap/entrainment calculation.",
+    "Lattice fraction is bound baryons, not nuclear volume filling factor.",
+    "Total proton fraction follows charge neutrality Yp=Ye+Ymu.",
+    "Composition interpolated within phases, transitions at geometric density bracket midpoints.",
+    "Star ends at the lowest tabulated pressure; no atmosphere extrapolation.",
+    "Separate BSk24 star; existing APR data and configuration are unchanged."
+  ],
+  "validation": {
+    "target_mass_msun": 1.399999999933216,
+    "target_mass_absolute_error_msun": 6.678391173409182e-11,
+    "refined_radius_change_m": 0.00039441029997533406,
+    "refined_mass_change_msun": 8.675081178958168e-11,
+    "published_eos_mr_radius_km": 12.590276699029125,
+    "radius_difference_from_eos_mr_m": -16.127782484561592,
+    "maximum_group_fraction_sum_error": 4.999999969612645e-09,
+    "maximum_identity_fraction_sum_error": 1.1102230246251565e-16,
+    "all_fractions_in_unit_interval": true,
+    "density_decreases": true,
+    "passed": true
+  }
+}

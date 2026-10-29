@@ -1,0 +1,18 @@
+{
+  "table": "LALSimNeutronStarEOS_APR.dat",
+  "sha256": "b6ef3d1cca79d723431958987a51f2951d0b998d179ef8f05697a99b0a5669d6",
+  "distribution": "lalsuite",
+  "distribution_version": "7.26.16",
+  "lalsimulation_version": "6.2.1",
+  "columns": [
+    "pressure_geometric_m^-2",
+    "energy_density_geometric_m^-2"
+  ],
+  "upstream": "https://git.ligo.org/lscsoft/lalsuite",
+  "documentation": "https://lscsoft.docs.ligo.org/lalsuite/dev/lalsimulation/group___l_a_l_sim_neutron_star_e_o_s__c.html",
+  "original_table_rows": 500,
+  "integration_table": "APR_monotone_dense.dat",
+  "integration_table_rows": 24498,
+  "integration_table_sha256": "1e57287934f0a9b265d364766f4a22cc2249d3000c5473276b859ce0e456c8bf",
+  "interpolation": "Monotone PCHIP log(E) versus log(P), densely sampled with every original node retained; LAL reconstructs h and rho."
+}

@@ -1,0 +1,106 @@
+{
+  "model": "cold spherical TOV + first-order Hartle rotation + static quadrupolar tides",
+  "eos": {
+    "table": "LALSimNeutronStarEOS_APR.dat",
+    "sha256": "b6ef3d1cca79d723431958987a51f2951d0b998d179ef8f05697a99b0a5669d6",
+    "distribution": "lalsuite",
+    "distribution_version": "7.26.16",
+    "lalsimulation_version": "6.2.1",
+    "columns": [
+      "pressure_geometric_m^-2",
+      "energy_density_geometric_m^-2"
+    ],
+    "upstream": "https://git.ligo.org/lscsoft/lalsuite",
+    "documentation": "https://lscsoft.docs.ligo.org/lalsuite/dev/lalsimulation/group___l_a_l_sim_neutron_star_e_o_s__c.html",
+    "original_table_rows": 500,
+    "integration_table": "APR_monotone_dense.dat",
+    "integration_table_rows": 24498,
+    "integration_table_sha256": "1e57287934f0a9b265d364766f4a22cc2249d3000c5473276b859ce0e456c8bf",
+    "interpolation": "Monotone PCHIP log(E) versus log(P), densely sampled with every original node retained; LAL reconstructs h and rho."
+  },
+  "binary_context": {
+    "mass_ratio_companion_over_ns": 3.0,
+    "intrinsic_equatorial_ellipticity": 5e-05,
+    "initial_orbital_frequency_hz": 0.4,
+    "initial_spin_frequency_hz": 0.5,
+    "initial_true_anomaly_minus_rotation_angle_rad": 0.3986,
+    "companion_mass_msun": 4.200000001699461
+  },
+  "mass_msun": 1.400000000566487,
+  "radius_km": 11.344950511095494,
+  "compactness_GM_Rc2": 0.1822198388688293,
+  "central_pseudo_enthalpy": 0.24678719840122834,
+  "central_pressure_pa": 1.4963841251148133e+34,
+  "central_pressure_dyn_cm2": 1.4963841251148132e+35,
+  "central_rest_mass_density_g_cm3": 919028371355610.8,
+  "central_energy_equivalent_density_g_cm3": 1009775398094773.8,
+  "moment_of_inertia_kg_m2": 1.3054506101740989e+38,
+  "moment_of_inertia_g_cm2": 1.3054506101740989e+45,
+  "moment_of_inertia_geometric_msun3": 30.110230412965837,
+  "prescribed_equatorial_delta_I_kg_m2": 6.527253050870495e+33,
+  "love_k2": 0.07461801965075691,
+  "tidal_deformability_lambda": 247.613414152472,
+  "paper_reference_I_msun3": 30.18,
+  "paper_reference_lambda": 248,
+  "I_fractional_difference_from_paper": -0.0023117822078914108,
+  "lambda_fractional_difference_from_paper": -0.0015588139013226199,
+  "layer_thresholds_rest_mass_g_cm3": {
+    "core_crust": 140000000000000.0,
+    "neutron_drip": 400000000000.0
+  },
+  "core_crust_boundary": {
+    "radius_km": 10.43169094830021,
+    "enclosed_mass_msun": 1.381738263738135,
+    "pressure_pa": 7.060832843851454e+31,
+    "rest_mass_density_g_cm3": 139999999999995.4,
+    "energy_equivalent_density_g_cm3": 142856511771998.25
+  },
+  "neutron_drip_boundary": {
+    "radius_km": 10.981441912109991,
+    "enclosed_mass_msun": 1.3999772229496956,
+    "pressure_pa": 7.2052446137719426e+28,
+    "rest_mass_density_g_cm3": 400000000000.38104,
+    "energy_equivalent_density_g_cm3": 403049450527.50574
+  },
+  "layers": [
+    {
+      "name": "core",
+      "inner_radius_km": 0,
+      "outer_radius_km": 10.43169094830021,
+      "coordinate_thickness_km": 10.43169094830021,
+      "proper_radial_thickness_km": 11.59951579182292,
+      "gravitational_mass_contribution_msun": 1.381738263738135,
+      "mass_fraction": 0.9869559022707409
+    },
+    {
+      "name": "inner crust",
+      "inner_radius_km": 10.43169094830021,
+      "outer_radius_km": 10.981441912109991,
+      "coordinate_thickness_km": 0.5497509638097817,
+      "proper_radial_thickness_km": 0.7010523361666312,
+      "gravitational_mass_contribution_msun": 0.0182389592115606,
+      "mass_fraction": 0.013027828002986077
+    },
+    {
+      "name": "outer crust",
+      "inner_radius_km": 10.981441912109991,
+      "outer_radius_km": 11.344950511095494,
+      "coordinate_thickness_km": 0.3635085989855025,
+      "proper_radial_thickness_km": 0.45813031232902546,
+      "gravitational_mass_contribution_msun": 2.277761679136958e-05,
+      "mass_fraction": 1.6269726272966422e-05
+    }
+  ],
+  "surface": {
+    "pseudo_enthalpy_cutoff": 1e-10,
+    "pressure_pa": 28918114.54264587
+  },
+  "boundary_interpretation": "Configurable rest-mass-density classification, not a predicted nuclear phase transition.",
+  "runtime": {
+    "python": "3.14.6",
+    "numpy": "2.5.1",
+    "scipy": "1.18.0",
+    "matplotlib": "3.11.2",
+    "lalsuite": "7.26.16"
+  }
+}
