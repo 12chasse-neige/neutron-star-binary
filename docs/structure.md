@@ -1,9 +1,10 @@
 # APR equilibrium model
 
-This document maps [`ns_model.py`](ns_model.py) and [`run.py`](run.py) to their
+This document maps [`nsbinary/structure.py`](../nsbinary/structure.py) and
+[`scripts/compute_structure.py`](../scripts/compute_structure.py) to their
 equations. The background is cold, spherical and isotropic. First-order slow
 rotation and linear static tides do not alter its hydrostatic density profile.
-Input provenance and interpolation are in [data/README.md](data/README.md).
+Input provenance and interpolation are in [data/README.md](../data/README.md).
 
 ## State and units
 
@@ -124,8 +125,7 @@ D&=2C_\star[6-3y_R+3C_\star(5y_R-8)]\\
 $$
 
 No finite-density jump condition is imposed. A self-bound surface or explicit
-sharp phase transition needs corresponding tidal matching conditions. The
-incompressible test EoS checks the background and inertia, not its Love number.
+sharp phase transition needs corresponding tidal matching conditions.
 
 ## Layers and exports
 
@@ -146,24 +146,21 @@ $\Delta M$ is gravitational mass, not proper-volume baryonic mass.
 `Star.profile` combines a whole-star grid, a denser crust grid and exact boundary
 radii. The exported $dm/dr$ is converted to $M_\odot\,\mathrm{km^{-1}}$.
 
-## Validation and physical scope
+## Physical scope
 
-`run.validate` records measured errors and acceptance limits:
+The background assumes cold, isotropic, nonrotating spherical hydrostatic
+equilibrium. First-order Hartle rotation yields $I$ without changing the TOV
+density or pressure profile; linear static tides yield $k_2$ and $\Lambda$
+without density jumps. Second-order rotation, finite temperature, magnetic
+fields, accretion and dynamical tides are omitted.
 
-- Target mass; finite profiles; outward monotonic mass, pressure and density.
-- Independent LAL TOV/Love integration at the same central pressure and EoS.
-- Tighter tolerance, smaller radial step and smaller central start at fixed
-  $h_c$; a separate tenfold decrease of the surface cutoff.
-- Mass quadrature, local $dM/dh_c>0$, positive compressibility and
-  $0<c_s^2/c^2=dP/d\mathcal E\leq1$ over the sampled star.
-- A logarithmic enthalpy scan and doubled dense-EoS sampling. Differences from
-  the native coarse interpolant are recorded separately.
+Density thresholds only label radial layers; they are not computed nuclear phase
+transitions. The model does not predict a magnetic mountain, crustal strain,
+species fractions, pairing gaps or the permanent quadrupole $\Delta I=\epsilon I$
+imposed by the inspiral calculation.
 
-Unit tests compare against the Schwarzschild uniform-density interior and
-$I/(MR^2)\to2/5$ in the Newtonian limit. The paper benchmarks
-$I=30.18\,M_\odot^3$ and $\Lambda=248$ are comparisons, not fitting targets.
-
-This model does not predict a magnetic mountain, crustal strain, species fractions,
-pairing gaps or the permanent quadrupole $\Delta I=\epsilon I$. Numerical
-convergence does not establish the accuracy of those additional physical inputs.
-Sources are linked in the [generated report](results/REPORT.md).
+Sources: [Akmal, Pandharipande & Ravenhall (1998)](https://arxiv.org/abs/nucl-th/9804027);
+[Chamel & Haensel (2008)](https://arxiv.org/abs/0812.3955);
+[Hartle (1967)](https://doi.org/10.1086/149400);
+[Hinderer (2008)](https://arxiv.org/abs/0711.2420);
+[LAL EOS documentation](https://lscsoft.docs.ligo.org/lalsuite/dev/lalsimulation/group___l_a_l_sim_neutron_star_e_o_s__c.html).

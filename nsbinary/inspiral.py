@@ -1,23 +1,23 @@
 """Two rigid effective rotators derived from Antonelli & Pizzochero (2017).
 
 Two radial microphysics zones (core, inner crust) feed the straight-vortex line
-integrals. The outer crust belongs to the normal rotator. This is the rigid
+integrals; the outer crust belongs to the normal rotator. This is the rigid
 projection of their differential model, not a solution of its radial PDE.
-All dynamics use SI, with energies and angular momenta divided by stellar I.
-See MODEL.md for derivations and state tables. Review build_reservoir first,
-then Binary.quantities (physical RHS), then Binary.evolve (solver/diagnostics).
+All dynamics use SI, with energies and angular momenta divided by the stellar I.
+
+Review build_reservoir first, then Binary.quantities (physical RHS), then
+Binary.evolve (solver and exported traces).
 """
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
-import hashlib
-import json
 
 import numpy as np
 from numpy.polynomial.legendre import leggauss
+from scipy.constants import G, c, h, neutron_mass
 from scipy.integrate import solve_ivp
 from scipy.interpolate import PchipInterpolator
-from scipy.constants import G, c, h, neutron_mass
 
 MSUN = 1.988409870698051e30
 KAPPA = h / (2 * neutron_mass)
@@ -34,8 +34,8 @@ class Reservoir:
     """Canonical reservoir calibrated to the saved Hartle total inertia.
 
     total_I: kg m^2; fv: I_v/I; B: Y times the inertia-weighted free mobility.
-    columns holds *unscaled* Newtonian line columns and normalized quadrature
-    weights. Fractions and B are unchanged by the common Hartle rescaling.
+    ``columns`` holds unscaled Newtonian line columns and normalized quadrature
+    weights. Inertia fractions and B are unchanged by the common rescaling.
     """
     total_I: float
     fv: float
@@ -48,29 +48,27 @@ class Reservoir:
         return 1 - self.fv
 
 
-def build_reservoir(cfg, background, order_multiplier=1):
-    """Evaluate AP a,b,d,Bx and their inertia-weighted cylindrical mean.
+def build_reservoir(cfg, background):
+    """Evaluate AP a, b, d, Bx and their inertia-weighted cylindrical mean.
 
-    Use Newtonian integrals of baryon rest density on the saved TOV areal-radius
-    profile, then multiply all inertias by one factor to match the Hartle I.
+    Uses Newtonian integrals of baryon rest density on the saved TOV areal-radius
+    profile, then multiplies all inertias by one factor to match the Hartle I.
     This hybrid convention is explicit; it is not a relativistic two-fluid EOS.
     """
     background = Path(background)
-    summary_path = background / "summary.json"
-    profile_path = background / "profiles.csv"
-    star = json.loads(summary_path.read_text())
-    profile = np.genfromtxt(profile_path, delimiter=",", names=True)
-    # APR exports km and g/cm^3; every line/volume integral below uses m and
-    # kg/m^3. Use rest density, not energy-equivalent density, in this reduction.
+    star = json.loads((background / "summary.json").read_text())
+    profile = np.genfromtxt(background / "profiles.csv", delimiter=",", names=True)
+    # The structure export uses km and g/cm^3; every line and volume integral
+    # below uses m and kg/m^3. Use rest density, not energy-equivalent density.
     radius = profile["radius_km"] * 1000
     rho = PchipInterpolator(radius, profile["rest_mass_density_g_cm3"] * 1000)
     rc = star["core_crust_boundary"]["radius_km"] * 1000
     rd = star["neutron_drip_boundary"]["radius_km"] * 1000
     outer = star["radius_km"] * 1000
-    nq = cfg["cylindrical_quadrature_order"] * order_multiplier
-    nz = cfg["line_quadrature_order"] * order_multiplier
+    nq = cfg["cylindrical_quadrature_order"]
+    nz = cfg["line_quadrature_order"]
     # Zone tuple: inner radius, outer radius, neutron mass fraction,
-    # epsilon_n=1-m*_n/m_n, eta/(kappa*rho_n). No neutron reservoir beyond rd.
+    # epsilon_n = 1 - m*_n/m_n, eta/(kappa*rho_n). No neutron reservoir beyond rd.
     zones = [(0., rc, cfg["core_neutron_fraction"], cfg["core_entrainment_epsilon_n"], cfg["core_drag_ratio"]),
              (rc, rd, cfg["inner_crust_neutron_fraction"], cfg["inner_crust_entrainment_epsilon_n"], cfg["inner_crust_drag_ratio"])]
     for _, _, xn, en, drag in zones:
@@ -106,7 +104,7 @@ def build_reservoir(cfg, background, order_multiplier=1):
             b[j] += column/(1-en)
             d[j] += column*drag
     # AP free-vortex response. All three columns have units kg/m^2, so bx and
-    # btheta are dimensionless. Large d suppresses radial motion, rather than
+    # btheta are dimensionless. Large d suppresses radial motion rather than
     # forcing arbitrarily fast material corotation.
     bx = d*b/(a*a+d*d)
     btheta = a*b/(a*a+d*d)
@@ -130,9 +128,6 @@ def build_reservoir(cfg, background, order_multiplier=1):
         "inner_crust_material_inertia_fraction": zone_inertias[1]/total_newton,
         "outer_crust_material_inertia_fraction": zone_inertias[2]/total_newton,
         "mean_B_free": Bfree, "mean_B_effective": B,
-        "cylindrical_vs_spherical_Iv_relative_error": abs(iv_cyl/iv_radial-1),
-        "profile_sha256": hashlib.sha256(profile_path.read_bytes()).hexdigest(),
-        "background_summary_sha256": hashlib.sha256(summary_path.read_bytes()).hexdigest(),
         "kappa_m2_per_s": KAPPA,
     }
     columns = {"cylindrical_radius_m": x, "a_kg_m2": a, "b_kg_m2": b,
@@ -145,18 +140,14 @@ class Binary:
     """Circular Hamiltonian plus quadrupole torque and leading GW radiation.
 
     n denotes the Kepler frequency inferred from orbital angular momentum L.
-    Keeping U(L,gamma) in the Hamiltonian adds its small frequency correction;
+    Keeping U(L, gamma) in the Hamiltonian adds its small frequency correction;
     the full system then conserves energy and angular momentum when GW and
     mutual friction are disabled. This avoids treating heat as an extra tidal
     torque, which would double-count the spin-orbit energy transfer.
     """
 
-    def __init__(self, cfg, reservoir, rigid=False, torque_enabled=True, gw_enabled=True):
-        """Set fixed masses/quadrupole and optional limiting-control switches.
-
-        A rigid control uses all I in p and B=0; its ov is a copy of the spin.
-        Disabling torque or radiation supports independent conservation tests.
-        """
+    def __init__(self, cfg, reservoir, rigid=False):
+        """Set fixed masses/quadrupole; ``rigid`` is the single-rotator control."""
         self.cfg, self.reservoir = cfg, reservoir
         self.I = reservoir.total_I
         self.fv = 0. if rigid else reservoir.fv
@@ -168,8 +159,7 @@ class Binary:
             raise ValueError("Require positive mass ratio and nonnegative ellipticity.")
         self.mt, self.mu = m*(1+q), m*q/(1+q)
         self.ratio = q/(1+q)
-        self.eps = cfg["ellipticity"] if torque_enabled else 0.
-        self.gw_enabled = gw_enabled
+        self.eps = cfg["ellipticity"]
         # Divide budgets by I to avoid enormous SI state magnitudes. The
         # equations remain SI; torque/I is an angular acceleration and flux/I
         # is specific power. Restore I only when exporting physical budgets.
@@ -181,20 +171,20 @@ class Binary:
 
         Return order: L/I, U/I, N/I, Omega_orb, F_GW/I, dn/dt,
         dOmega_p/dt, dOmega_v/dt, P_heat/I. Here n is a Kepler angular
-        frequency, not Hz, and phase=2(theta-f). Positive N spins up p.
+        frequency, not Hz, and phase = 2(theta - f). Positive N spins up p.
         """
         ell = self.ell_coeff*n**(-1/3)  # L/I
         u = -.75*self.ratio*self.eps*n*n*np.cos(phase)  # U/I
         torque = -1.5*self.ratio*self.eps*n*n*np.sin(phase)  # N/I
         orb = n-6*u/ell  # d(E_Kep+U)/dL
-        flux = self.flux_coeff*n**(10/3) if self.gw_enabled else 0.
+        flux = self.flux_coeff*n**(10/3)
         # Circular reaction: L proportional to n^(-1/3). Removing orbital
-        # angular momentum raises n. F_J=F_GW/Omega_orb preserves dH/dt=-F_GW
+        # angular momentum raises n. F_J = F_GW/Omega_orb preserves dH/dt = -F_GW
         # for this Hamiltonian, including its small conservative correction.
         ndot = 3*n/ell*(torque+flux/orb)
         k = 2*self.B*ov
         vdot = -k*(ov-op)
-        # Friction exchanges spin momentum internally: fp*pdot+fv*vdot=N/I.
+        # Friction exchanges spin momentum internally: fp*pdot + fv*vdot = N/I.
         # Heating follows from the same exchange and is NOT another orbit torque.
         pdot = (torque-self.fv*vdot)/self.fp
         if self.fv == 0:
@@ -202,26 +192,13 @@ class Binary:
         heat = self.fv*k*(ov-op)**2 if self.fv else np.zeros_like(op)
         return ell, u, torque, orb, flux, ndot, pdot, vdot, heat
 
-    def rhs_time(self, t, y):
-        """Time-domain interface for conservation/limiting-solution tests.
+    def evolve(self, initialization="locked", sample_count=5000):
+        """Integrate in log(n) and return the exported trace columns.
 
-        y=[n,gamma,op,ov,Q/I,E_GW/I,J_GW/I,W_star/I,W_orbit/I].
-        This differs from evolve's log-frequency state: n is a state here,
-        elapsed time is not, and no phase-difference diagnostic is integrated.
-        """
-        n, phase, op, ov = y[:4]
-        ell, u, torque, orb, flux, ndot, pdot, vdot, heat = self.quantities(n, phase, op, ov)
-        return np.array([ndot, 2*(op-orb), pdot, vdot, heat, flux, flux/orb,
-                         op*torque, orb*torque])
-
-    def evolve(self, initialization="locked", accuracy=1., sample_count=5000):
-        """Integrate in log(n), then export traces and physical audit summaries.
-
-        ``paper`` tests capture from the original frequencies and rounded phase;
+        ``paper`` starts from the original frequencies and rounded phase;
         ``locked`` starts near a stable rigid equilibrium for conditional
-        locking comparisons. accuracy>1 tightens tolerances and maximum steps.
-        sample_count adds dense log-frequency samples; adaptive nodes are kept
-        as well, so neither this value nor CSV decimation sets ODE resolution.
+        locking comparisons. ``sample_count`` adds dense log-frequency samples;
+        adaptive nodes are kept as well, so it does not set ODE resolution.
         """
         cfg = self.cfg
         if initialization == "paper":
@@ -245,8 +222,9 @@ class Binary:
         if not 0 < n0 < n1 or op0 <= 0:
             raise ValueError("Require positive initial spin and increasing orbital frequency.")
         # Variables: phase, Omega_p, Omega_v, t, Q/I, E_GW/I, J_GW/I,
-        # W_star/I, W_orbit/I, phase_difference_from_point_particle.
+        # W_star/I, W_orbit/I, phase difference from the point-particle chirp.
         initial = np.array([phase0, op0, ov0, 0, 0, 0, 0, 0, 0, 0.])
+
         def rhs(logn, y):
             n = np.exp(logn)
             phase, op, ov = y[:3]
@@ -256,30 +234,32 @@ class Binary:
             dt = n/ndot
             ndot_pp = 3*flux/ell
             # dt here is dt/d(log n), not an integration step. The final term
-            # accumulates 2*integral(Omega_orb/ndot - n/ndot_pp) dn, comparing
+            # accumulates 2 integral(Omega_orb/ndot - n/ndot_pp) dn, comparing
             # time-domain GW phases at equal Kepler frequency and initial phase.
             return np.array([2*(op-orb)*dt, pdot*dt, vdot*dt, dt,
                              heat*dt, flux*dt, flux/orb*dt, op*torque*dt,
                              orb*torque*dt, 2*n*(orb/ndot-n/ndot_pp)])
+
         atol = np.array([cfg["phase_absolute_tolerance_rad"], 1e-10, 1e-10,
-                         1e-5, 1e-9, 1e-5, 1e-7, 1e-9, 1e-9, 1e-7])/accuracy
+                         1e-5, 1e-9, 1e-5, 1e-7, 1e-9, 1e-9, 1e-7])
+
         def jacobian(logn, y):
             # Complex-step derivatives also handle identically zero diagnostic
             # variables without finite-difference step escalation.
             perturbation = 1e-24j*np.eye(len(y))
             return np.column_stack([np.imag(rhs(logn, y+delta))/1e-24 for delta in perturbation])
+
         # Before capture the circulation is fast compared with friction; an
         # explicit high-order solver is much faster. Locked drag sweeps include
         # stiff relaxation and use an implicit solver.
         method = "DOP853" if initialization == "paper" else "Radau"
         options = {"jac": jacobian} if method == "Radau" else {}
         solution = solve_ivp(rhs, (np.log(n0), np.log(n1)), initial, method=method,
-                             rtol=cfg["relative_tolerance"]/accuracy, atol=atol,
-                             dense_output=True, max_step=.015/np.sqrt(accuracy), **options)
+                             rtol=cfg["relative_tolerance"], atol=atol,
+                             dense_output=True, max_step=.015, **options)
         if not solution.success:
             raise RuntimeError(solution.message)
-        # Audit before CSV thinning, combining the adaptive mesh with dense
-        # sampling so rapid phase motion is not judged from coarse exports.
+        # Combine the adaptive mesh with dense log-frequency sampling for export.
         logn = np.unique(np.r_[np.linspace(np.log(n0), np.log(n1), sample_count), solution.t])
         n = np.exp(logn)
         y = solution.sol(logn)
@@ -287,16 +267,10 @@ class Binary:
         ell, u, torque, orb, flux, ndot, pdot, vdot, power = self.quantities(n, phase, op, ov)
         spin = .5*(self.fp*op*op+self.fv*ov*ov)
         eorb = -.5*ell*n
-        # Closed budgets (all divided by I): Delta H+Q+E_GW=0 and
-        # Delta(L+J_spin)+J_GW=0. Keep U: it mediates the torque-work mismatch.
-        energy_residual = eorb-eorb[0]+spin-spin[0]+u-u[0]+heat+egw
-        j_residual = ell-ell[0]+self.fp*(op-op[0])+self.fv*(ov-ov[0])+jgw
-        # Spin-only audit has no cancellation against the huge orbital binding energy.
-        spin_residual = spin-spin[0]+heat-wstar
         tau = np.full_like(ov, np.inf) if self.B == 0 else self.fp/(2*self.B*ov)
         # Inertia-weighted rms of x*Bx, then multiply by signed lag and Y.
         # This is rms over radius of the mobility-averaged drift, not an rms
-        # over individual pinned/mobile vortices (which would weight Y differently).
+        # over individual pinned/mobile vortices.
         radial_rms = np.sqrt(np.sum(reservoir_weights(self.reservoir)*
                             (self.reservoir.columns["cylindrical_radius_m"]*
                              self.reservoir.columns["B_radial_free"])**2))
@@ -319,44 +293,27 @@ class Binary:
                "vortex_areal_density_m2": 2*ov/KAPPA}
         if self.fv == 0:
             out["signed_rms_vortex_radial_velocity_m_s"] *= 0
-        # Measure capture at a fixed frequency window, not by assuming that
-        # the supplied initial phase guarantees capture after changing physics.
-        capture_window = (n/(2*np.pi) >= .8) & (n/(2*np.pi) <= 1.)
-        captured = bool(np.any(capture_window) and np.ptp(phase[capture_window]) < 2*np.pi
-                        and np.mean(abs(op[capture_window]-orb[capture_window])/orb[capture_window]) < .02)
-        # The first stored sample at/above 1 Hz supplies a fixed phase reference.
-        # A full 2pi excursion is an operational slip, not a quasistatic torque
-        # limit or the first moment of nonzero crust-orbit frequency mismatch.
-        ref = np.searchsorted(n/(2*np.pi), 1.)
-        slip = np.flatnonzero((np.arange(len(n)) >= ref) & (abs(phase-phase[ref]) >= 2*np.pi)) if captured else []
-        diagnostic = {
-            "initialization": initialization, "rigid": bool(self.fv == 0),
-            "captured_in_0p8_to_1_hz_window": captured,
-            "mean_B": self.B, "effective_v_fraction": self.fv,
-            "duration_s": float(time[-1]), "heat_J": float(heat[-1]*self.I),
-            "heat_over_orbital_binding_energy_loss": float(heat[-1]/(eorb[0]-eorb[-1])),
-            "heat_over_gw_radiated_energy": float(heat[-1]/egw[-1]),
-            "max_instantaneous_heat_over_gw_power": float(np.max(power/flux)),
-            "star_torque_work_J": float(wstar[-1]*self.I),
-            "orbit_torque_work_J": float(worb[-1]*self.I),
-            "spin_energy_change_J": float((spin[-1]-spin[0])*self.I),
-            "orbital_binding_energy_loss_J": float((eorb[0]-eorb[-1])*self.I),
-            "heat_fraction_of_net_star_work": float(heat[-1]/wstar[-1]) if wstar[-1] > 0 else None,
-            "first_phase_slip_gw_hz": float(orb[slip[0]]/np.pi) if len(slip) else None,
-            "final_crust_frequency_hz": float(op[-1]/(2*np.pi)),
-            "final_superfluid_frequency_hz": float(ov[-1]/(2*np.pi)),
-            "max_absolute_canonical_lag_rad_s": float(np.max(abs(ov-op))),
-            "max_absolute_vortex_radial_velocity_m_s": float(np.max(abs(radial_rms))),
-            "max_energy_balance_error_over_orbital_loss": float(np.max(abs(energy_residual))/(eorb[0]-eorb[-1])),
-            "max_angular_momentum_balance_error_over_orbital_loss": float(np.max(abs(j_residual))/(ell[0]-ell[-1])),
-            "max_spin_balance_error_over_work": float(np.max(abs(spin_residual))/max(np.max(abs(wstar)), 1)),
-            "minimum_mutual_friction_power_W": float(np.min(power)*self.I),
-            "final_gw_phase_difference_from_point_particle_rad": float(dephase[-1]),
-            "solver_function_evaluations": solution.nfev,
-            "solver_method": method,
-            "stored_samples": len(logn)
-        }
-        return out, diagnostic
+        return out
+
+
+def summarize_trace(trace):
+    """Final scalar values of one evolved scenario in physical SI units."""
+    heat = float(trace["heat_J"][-1])
+    orbital_loss = float(trace["orbital_binding_energy_loss_J"][-1])
+    return {
+        "duration_s": float(trace["time_s"][-1]),
+        "final_orbital_frequency_hz": float(trace["orbital_frequency_hz"][-1]),
+        "final_crust_frequency_hz": float(trace["crust_frequency_hz"][-1]),
+        "final_superfluid_frequency_hz": float(trace["canonical_superfluid_frequency_hz"][-1]),
+        "heat_J": heat,
+        "gw_energy_J": float(trace["gw_energy_J"][-1]),
+        "star_torque_work_J": float(trace["star_torque_work_J"][-1]),
+        "orbital_binding_energy_loss_J": orbital_loss,
+        "heat_over_orbital_binding_energy_loss": heat/orbital_loss,
+        "max_absolute_canonical_lag_rad_s": float(np.max(np.abs(trace["canonical_lag_rad_s"]))),
+        "max_absolute_vortex_radial_velocity_m_s": float(np.max(np.abs(trace["signed_rms_vortex_radial_velocity_m_s"]))),
+        "final_gw_phase_difference_from_point_particle_rad": float(trace["gw_phase_difference_from_point_particle_rad"][-1]),
+    }
 
 
 def reservoir_weights(reservoir):

@@ -1,10 +1,12 @@
 # Two-component inspiral: equations and implementation
 
-[`model.py`](model.py) implements a rigid projection of the straight-vortex
-entrainment model of [Antonelli & Pizzochero (AP)](https://arxiv.org/abs/1603.02838v4),
-combined with the aligned circular quadrupole resonance of
+[`nsbinary/inspiral.py`](../nsbinary/inspiral.py) implements a rigid projection
+of the straight-vortex entrainment model of
+[Antonelli & Pizzochero (AP)](https://arxiv.org/abs/1603.02838v4), combined with
+the aligned circular quadrupole resonance of
 [Miao & Yang](https://arxiv.org/abs/2511.08895v2).
-[`run.py`](run.py) chooses scenarios, checks convergence and writes reports.
+[`scripts/compute_inspiral.py`](../scripts/compute_inspiral.py) runs the
+scenarios and writes numeric traces and summaries.
 This is an extension under explicit approximations, not a direct reproduction
 of a published two-fluid binary calculation.
 
@@ -50,7 +52,7 @@ reservoir, not the inertia of microscopic vortex cores.
 The input checks require $0\leq x_n<1$, $\varepsilon_n<x_p=1-x_n$ and
 nonnegative drag, giving a locally positive inertia matrix. All neutrons counted
 by $x_n$ are assumed superfluid. APR supplies neither these fractions nor pairing,
-entrainment or drag. The separate BSk24 composition is not imported.
+entrainment or drag.
 
 ## 2. Straight-vortex line integrals
 
@@ -175,8 +177,8 @@ $$
 Q=\frac{I_pI_v}{2I}(\omega_i^2-\omega_f^2).
 $$
 
-This identity is tested independently. During driven spin-up, $\omega<0$
-corresponds to inward vortex drift and increasing $n_v$.
+This identity follows from angular-momentum conservation. During driven spin-up,
+$\omega<0$ corresponds to inward vortex drift and increasing $n_v$.
 The exported signed speed is defined operationally as
 
 $$
@@ -248,8 +250,8 @@ $$
 \frac{\mathcal F_{\rm GW}}{\Omega_{\rm orb}}=0.
 $$
 
-Together with the spin-only balance, these are integrated numerical audits.
-The code records both
+The spin-only balance follows directly from
+$\dot E_{\rm spin}=\Omega_pN-P_{\rm heat}$. The code records both
 $W_\star=\int\Omega_pN\,dt$ and $W_{\rm orbit}=\int\Omega_{\rm orb}N\,dt$.
 Their difference reflects the changing interaction energy and circular radius.
 Heat enters only through internal friction; adding it again to the orbital
@@ -257,16 +259,15 @@ torque would double-count energy transfer. Integrated heat is not a temperature.
 
 The point-particle reference sets $U=N=0$. Post-Newtonian terms, eccentricity,
 dynamical tides and radiation from stellar rotation are omitted.
-Plot abscissae generally use $n/\pi$ as GW frequency, while phase-slip summaries
-use $\Omega_{\rm orb}/\pi$. Both orbital frequencies are exported; their small
+Both orbital frequencies are exported; their small
 difference is the conservative correction above.
 
-## 5. Initial conditions and capture diagnostics
+## 5. Initial conditions and phase diagnostic
 
 `paper` starts with $n_0/(2\pi)=0.4\,\mathrm{Hz}$,
 $\Omega_{p,0}/(2\pi)=\Omega_{v,0}/(2\pi)=0.5\,\mathrm{Hz}$ and
-$\gamma_0=-2(0.3986)$. Capture is determined by evolution.
-`locked` starts at $n_0/(2\pi)=0.6\,\mathrm{Hz}$ with
+$\gamma_0=-2(0.3986)$. Whether resonance capture occurs is determined by the
+evolution. `locked` starts at $n_0/(2\pi)=0.6\,\mathrm{Hz}$ with
 
 $$
 \sin\gamma_*=-\frac{2\dot n_{\rm GW}}{3\epsilon(M'/M_t)n^2},\qquad
@@ -275,26 +276,9 @@ $$
 
 This is the stable rigid equilibrium phase with the point-particle chirp;
 finite backreaction and the developing two-component lag can cause a transient.
-Every drag-sweep case starts independently this way, so it tests evolution
+Every drag-sweep case starts independently this way, so it describes evolution
 conditional on capture rather than capture probability.
 
-Capture requires a phase range below $2\pi$ and mean fractional charged-spin
-mismatch below $0.02$ in the Kepler orbital-frequency window $0.8$–$1.0\,\mathrm{Hz}$.
-The phase reference is the first stored sample at or above $1\,\mathrm{Hz}$.
-The first subsequent absolute excursion of $2\pi$ is a full phase slip.
-A missing slip means no detected slip by the endpoint, or no established capture;
-read the capture flag too. This criterion is distinct from the first loss of
-frequency tracking or the disappearance of a quasistatic fixed point.
-
-The ideal rigid torque-limit GW frequency is
-
-$$
-f_{\rm br}=\frac{c^3}{\pi G(M+M')}
-\left[\frac{5(1+q)}{64}\right]^{3/5}\epsilon^{3/5}.
-$$
-
-The instantaneous two-component load depends on lag; changing a friction time
-in this rigid formula does not calculate its breaking point.
 The phase diagnostic is the time-domain accumulated GW phase at matched Kepler
 frequency relative to the point-particle trajectory, with equal initial phase:
 
@@ -307,48 +291,7 @@ $$
 It combines conservative spin-up, altered locking and heating. It is not an
 isolated dissipative waveform term or the paper's stationary-phase correction.
 
-## 6. Bound from available orbital torque
-
-For fixed masses and imposed quadrupole,
-
-$$
-A(n)=\frac32\frac{M'}{M_t}\Delta I\,n^2=\max|N|,\qquad
-\alpha(n)=\frac{A(n)n}{\mathcal F_{\rm GW}(n)}\propto n^{-1/3}.
-$$
-
-Ignoring the small conservative frequency correction initially,
-
-$$
-\dot n\geq\frac{3[\mathcal F_{\rm GW}-nA]}{L}>0,\qquad
-|W_{\rm orbit}|\leq\int_{n_0}^{n_1}
-\frac{A(n)nL(n)}{3[\mathcal F_{\rm GW}(n)-nA(n)]}\,dn.
-$$
-
-This permits either torque sign and uses the smallest allowed chirp. The
-Hamiltonian correction obeys
-
-$$
-\left|\frac{\Omega_{\rm orb}}n-1\right|
-\leq\delta(n)=\frac92\frac{M'}{M_t}\frac{\Delta I\,n}{L(n)}.
-$$
-
-The code evaluates the corrected bound
-
-$$
-|W_{\rm orbit}|\leq\int_{n_0}^{n_1}
-\frac{A(n)n[1+\delta(n)]^2L(n)}
-{3\{\mathcal F_{\rm GW}(n)-A(n)n[1+\delta(n)]\}}\,dn,
-$$
-
-which requires a positive denominator over the interval. This condition holds
-for the supplied inputs; arbitrary new configurations need it checked before
-interpreting the bound. Initial spin and interaction energy also belong in any
-bound on total heat: net positive orbital work alone does not generally bound it.
-The interaction contribution is limited by $|U_i|+|U_f|$.
-This bound applies only to the imposed quadrupole channel, not all stellar
-heating mechanisms.
-
-## 7. Numerical state and review limits
+## 6. Numerical state and scope
 
 `Binary.quantities` divides torques, energies and angular momenta by the saved
 stellar $I$. Its `ell`, `u`, `torque` and `flux` mean $L/I$, $U/I$, $N/I$ and
@@ -363,26 +306,15 @@ The integration uses $s=\ln n$, with $dt/ds=n/\dot n$:
 | 7–8 | `wstar`, `worb` | $W_\star/I,W_{\rm orbit}/I$ |
 | 9 | `dephase` | $\Delta\Phi$ |
 
-`rhs_time` is a separate test interface whose first four entries are
-$[n,\gamma,\Omega_p,\Omega_v]$, followed by the five accumulated budgets;
-its ordering must not be substituted for the table above.
-
 Monotone $\dot n>0$ and positive $\Omega_v$ are enforced. Paper-start circulation
 uses explicit DOP853; locked trajectories use implicit Radau for stiff drag
 relaxation. A complex-step Jacobian differentiates the smooth RHS without
 finite-difference cancellation in zero diagnostic components.
-Diagnostics combine adaptive solver nodes with a dense uniform log-frequency
-grid. CSV export retains at most 15,000 rows; audits precede that decimation.
-
-Validation checks all three budgets, nonnegative heat, tighter evolution
-tolerances, doubled line/cylindrical quadrature and preservation of the capture
-flag. Tests independently cover isolated relaxation, the closed Hamiltonian,
-point-particle chirp and zero/infinite drag. See `validation.json` for actual
-errors and limits.
+Exported samples combine the adaptive solver nodes with a dense uniform
+log-frequency grid. CSV export retains at most 15,000 rows.
 
 The rigid projection cannot resolve differential canonical rotation, vortex
 pile-up, bending, turbulence, finite-strength unpinning or thermal creep.
 Large lag or strongly variable mobility may invalidate the approximation.
 Pairing, temperature, cooling, magnetic stress evolution and changes in the
 quadrupole are not evolved. APR boundaries remain assumed density labels.
-Convergence verifies the selected equations, not these physical assumptions.

@@ -4,7 +4,7 @@
   "initial_f_minus_theta_rad": 0.3986,
   "locked_start_orbital_frequency_hz": 0.6,
   "final_orbital_frequency_hz": 25.0,
-  "ellipticity": 5e-05,
+  "ellipticity": 5e-5,
   "mass_ratio_companion_over_ns": 3.0,
   "core_neutron_fraction": 0.9,
   "inner_crust_neutron_fraction": 0.8,
@@ -16,19 +16,7 @@
   "cylindrical_quadrature_order": 160,
   "line_quadrature_order": 96,
   "relative_tolerance": 2e-10,
-  "phase_absolute_tolerance_rad": 2e-08,
-  "drag_sweep_core_ratios": [
-    1e-08,
-    1e-07,
-    1e-06,
-    1e-05,
-    0.0001,
-    0.001,
-    0.01,
-    0.1,
-    1.0,
-    10.0,
-    100.0
-  ],
+  "phase_absolute_tolerance_rad": 2e-8,
+  "drag_sweep_core_ratios": [1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 0.001, 0.01, 0.1, 1.0, 10.0, 100.0],
   "drag_sweep_crust_over_core": 10.0
 }

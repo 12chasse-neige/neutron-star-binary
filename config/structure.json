@@ -1,0 +1,9 @@
+{
+  "target_mass_msun": 1.4,
+  "core_crust_rest_mass_density_g_cm3": 1.4e14,
+  "neutron_drip_rest_mass_density_g_cm3": 4.0e11,
+  "surface_pseudo_enthalpy": 1.0e-10,
+  "relative_tolerance": 2.0e-9,
+  "max_step_km": 0.025,
+  "profile_points": 2401
+}

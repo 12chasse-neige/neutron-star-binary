@@ -1,64 +1,23 @@
 """Cold spherical neutron star: TOV, Hartle frame dragging and tidal Love number.
 
-The integration uses G=c=1 and lengths in km. Public results use SI/cgs units.
-An EOS supplies the background; density thresholds only label its radial layers.
+The integration uses G = c = 1 and lengths in km; public results use SI/cgs.
+An equation of state supplies the background; density thresholds only label its
+radial layers.
 
-Review with MODEL.md. The integration state is [m, h, w, z, y, ell], where
-w = Omega - omega_fd, z = dw/dr, y = r H'/H and ell is proper radial distance.
-The code's h is pseudo-enthalpy, not Planck's constant used by the vortex model.
+The integration state is [m, h, w, z, y, ell], where w = Omega - omega_fd,
+z = dw/dr, y = r H'/H and ell is proper radial distance. The code's h is
+pseudo-enthalpy, not Planck's constant.
 """
 
 from dataclasses import dataclass
-from pathlib import Path
 
-import lal
-import lalsimulation as lalsim
 import numpy as np
 from scipy.integrate import solve_ivp
 from scipy.optimize import brentq
 
-G = lal.G_SI
-C = lal.C_SI
-MSUN = lal.MSUN_SI
-RSUN_KM = lal.MRSUN_SI / 1000
-PRESSURE_TO_GEOM = G / C**4 * 1e6  # Pa -> km^-2
-DENSITY_TO_GEOM = G / C**2 * 1e6  # kg m^-3 -> km^-2
+from .units import DENSITY_TO_GEOM, PRESSURE_TO_GEOM, RSUN_KM, C, G
 
-
-class EquationOfState:
-    """Adapt LAL thermodynamics to the kilometre-based structure equations.
-
-    The production runner passes the monotone dense table explicitly. Omitting
-    ``table`` selects LAL's named EOS, which need not use that interpolation.
-    LAL reconstructs h and baryonic rest density from the input P(E) barotrope;
-    this adapter does not supply particle fractions or nuclear phase labels.
-    """
-
-    def __init__(self, name="APR", table=None):
-        self.name = name
-        self.raw = (lalsim.SimNeutronStarEOSFromFile(str(Path(table).resolve()))
-                    if table else lalsim.SimNeutronStarEOSByName(name))
-        self.hmax = lalsim.SimNeutronStarEOSMaxPseudoEnthalpy(self.raw)
-
-    def at_h(self, h):
-        """Return (P [km^-2], total E [km^-2], rest rho [kg m^-3])."""
-        # Trial ODE evaluations can step beyond the terminal surface. Keep the
-        # library query positive; the event, not this floor, defines the surface.
-        h = max(float(h), 1e-14)
-        p = lalsim.SimNeutronStarEOSPressureOfPseudoEnthalpy(h, self.raw)
-        energy = lalsim.SimNeutronStarEOSEnergyDensityOfPseudoEnthalpy(h, self.raw)
-        rho = lalsim.SimNeutronStarEOSRestMassDensityOfPseudoEnthalpy(h, self.raw)
-        return p * PRESSURE_TO_GEOM, energy * PRESSURE_TO_GEOM, rho
-
-    def h_at_rho(self, rho_g_cm3):
-        """Invert the rest-density label, converting kg/m^3 to g/cm^3."""
-        return brentq(lambda h: self.at_h(h)[2] / 1000 - rho_g_cm3,
-                      1e-10, self.hmax, xtol=1e-14)
-
-    def dedp(self, p_geom):
-        """Dimensionless dE/dP; its reciprocal is c_s^2/c^2."""
-        return lalsim.SimNeutronStarEOSEnergyDensityDerivOfPressure(
-            p_geom / PRESSURE_TO_GEOM, self.raw)
+LAYER_NAMES = ("core", "inner crust", "outer crust")
 
 
 @dataclass
@@ -68,7 +27,7 @@ class Star:
     Gravitational mass is stored as a length. Densities and boundary pressures
     are converted only at the public export boundary, never inside the ODE.
     """
-    eos: EquationOfState
+    eos: object
     central_h: float
     surface_h: float
     solution: object
@@ -150,10 +109,10 @@ class Star:
 
 def integrate(eos, central_h, surface_h=1e-10, rtol=2e-9,
               max_step_km=0.025, start_radius_km=1e-4):
-    """Integrate m,h,w,w',y,proper radial distance in areal radius r.
+    """Integrate m, h, w, w', y and proper radial distance in areal radius r.
 
-    w=Omega-omega is arbitrarily normalized at the center. Matching to the
-    exterior w=Omega-2J/r^3 determines I=J/Omega. y=r H'/H is the l=2
+    w = Omega - omega is arbitrarily normalized at the centre. Matching to the
+    exterior w = Omega - 2J/r^3 determines I = J/Omega. y = r H'/H is the l=2
     static tidal metric perturbation; no density jump is imposed here.
     """
     if not 0 < surface_h < central_h < eos.hmax:
@@ -169,7 +128,7 @@ def integrate(eos, central_h, surface_h=1e-10, rtol=2e-9,
 
     def rhs(r, state):
         # a is the positive gravitational acceleration in enthalpy units:
-        # dh/dr=-a. log_j_prime couples the TOV solution to Hartle rotation.
+        # dh/dr = -a. log_j_prime couples the TOV solution to Hartle rotation.
         m, h, w, z, y, _ = state
         p, e, _ = eos.at_h(max(h, surface_h * 0.01))
         f = 1 - 2*m/r
@@ -206,7 +165,6 @@ def solve_target(eos, target_mass_msun=1.4, **options):
 
     A sampled downturn stops the search before the unstable continuation. This
     is not a full turning-point/stability analysis or a low-mass branch finder.
-    ``run.validate`` separately checks the local positive mass slope.
     """
     if target_mass_msun <= 0:
         raise ValueError("Target mass must be positive.")
@@ -225,3 +183,44 @@ def solve_target(eos, target_mass_msun=1.4, **options):
             break
         previous_h, previous_mass = h, mass
     raise ValueError("Target not reached on the supported stable branch.")
+
+
+def build_summary(star, cfg):
+    """Computed surface observables and density-defined radial layers.
+
+    Shell Delta m is gravitational mass, while shell labels use rest density.
+    Proper thickness comes from the sixth ODE state, not coordinate subtraction.
+    """
+    cc = star.boundary(cfg["core_crust_rest_mass_density_g_cm3"])
+    drip = star.boundary(cfg["neutron_drip_rest_mass_density_g_cm3"])
+    pc, ec, rhoc = star.eos.at_h(star.central_h)
+    r, m = star.radius_km, star.mass_msun
+    bounds = [0, cc["radius_km"], drip["radius_km"], r]
+    masses = [0, cc["enclosed_mass_msun"], drip["enclosed_mass_msun"], m]
+    proper = [0] + [float(star.solution.sol(x)[5]) for x in bounds[1:]]
+    layers = [{"name": name, "inner_radius_km": bounds[i], "outer_radius_km": bounds[i+1],
+               "coordinate_thickness_km": bounds[i+1] - bounds[i],
+               "proper_radial_thickness_km": proper[i+1] - proper[i],
+               "gravitational_mass_contribution_msun": masses[i+1] - masses[i],
+               "mass_fraction": (masses[i+1] - masses[i]) / m}
+              for i, name in enumerate(LAYER_NAMES)]
+    # I_geom is a length cubed: km^3 -> m^3, then c^2/G -> kg m^2.
+    inertia = star.inertia_geom_km3 * 1e9 * C*C/G
+    return {
+        "eos": star.eos.name,
+        "mass_msun": m, "radius_km": r, "compactness_GM_Rc2": star.surface[0]/r,
+        "central_pseudo_enthalpy": star.central_h,
+        "central_pressure_pa": pc/PRESSURE_TO_GEOM,
+        "central_rest_mass_density_g_cm3": rhoc/1000,
+        "central_energy_equivalent_density_g_cm3": ec/DENSITY_TO_GEOM/1000,
+        "moment_of_inertia_kg_m2": inertia,
+        "moment_of_inertia_g_cm2": inertia*1e7,
+        "moment_of_inertia_geometric_msun3": star.inertia_geom_km3/RSUN_KM**3,
+        "love_k2": star.love_k2, "tidal_deformability_lambda": star.tidal_lambda,
+        "layer_thresholds_rest_mass_g_cm3": {
+            "core_crust": cfg["core_crust_rest_mass_density_g_cm3"],
+            "neutron_drip": cfg["neutron_drip_rest_mass_density_g_cm3"]},
+        "core_crust_boundary": cc, "neutron_drip_boundary": drip, "layers": layers,
+        "surface": {"pseudo_enthalpy_cutoff": star.surface_h,
+                    "pressure_pa": star.eos.at_h(star.surface_h)[0]/PRESSURE_TO_GEOM},
+    }
